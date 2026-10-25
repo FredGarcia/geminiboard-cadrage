@@ -5,11 +5,11 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, readdirSync, rmSync } from 'node:fs';
+import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { freshBoard, loadSpikeRun, projections, realCorpora } from './helpers.mjs';
+import { FIXTURE_WORKSPACE_WIN, freshBoard, loadSpikeRun, projections, realCorpora } from './helpers.mjs';
 
 const ROOT = fileURLToPath(new URL('../../../', import.meta.url));
 const CAPTURE = join(ROOT, 'spike', 'capture.mjs');
@@ -53,7 +53,7 @@ function replay(dir) {
 test('corpus synthétique produit par le spike : rejeu complet', () => {
   const out = mkdtempSync(join(tmpdir(), 'gb-corpus-'));
   try {
-    const r = spawnSync(process.execPath, [CAPTURE, '--bin', FAKE, '--out', out, '--with-yolo', '--timeout', '20'],
+    const r = spawnSync(process.execPath, [CAPTURE, '--entry', FAKE, '--out', out, '--with-yolo', '--timeout', '20'],
       { encoding: 'utf8', timeout: 120000 });
     assert.equal(r.status, 0, r.stderr);
     const [run] = readdirSync(out);
@@ -64,6 +64,28 @@ test('corpus synthétique produit par le spike : rejeu complet', () => {
     assert.deepEqual(db.prepare('SELECT seq FROM turn WHERE conversation_id = ? ORDER BY seq').all(s2).map((x) => x.seq), [1, 2, 3, 4, 5]);
     // S3 : l'écriture autorisée en auto_edit donne un artefact
     assert.ok(db.prepare(`SELECT count(*) n FROM artifact WHERE path = 'essai-auto-edit.txt'`).get().n >= 1);
+  } finally {
+    rmSync(out, { recursive: true, force: true });
+  }
+});
+
+test('corpus produit sous Windows (simulé) : chemins Windows, artefacts relatifs au dossier de travail', () => {
+  const out = mkdtempSync(join(tmpdir(), 'gb-corpus-win-'));
+  try {
+    const r = spawnSync(process.execPath, [CAPTURE, '--entry', FAKE, '--out', out, '--only', 'S3', '--timeout', '20'],
+      { encoding: 'utf8', timeout: 120000 });
+    assert.equal(r.status, 0, r.stderr);
+    const dir = join(out, readdirSync(out)[0]);
+    // Ce que le spike écrirait sous Windows : plateforme win32, chemins à barres inverses (échappées dans le JSON)
+    const envFile = join(dir, 'environnement.json');
+    writeFileSync(envFile, JSON.stringify({ ...JSON.parse(readFileSync(envFile, 'utf8')), platform: 'win32 x64' }));
+    for (const f of readdirSync(join(dir, 'S3')).filter((x) => x.endsWith('.jsonl'))) {
+      const file = join(dir, 'S3', f);
+      writeFileSync(file, readFileSync(file, 'utf8').split('<WORKSPACE>/').join('<WORKSPACE>\\\\'));
+    }
+    const { db } = replay(dir);
+    assert.ok(db.prepare(`SELECT count(*) n FROM conversation WHERE cwd = ?`).get(FIXTURE_WORKSPACE_WIN).n >= 1);
+    assert.deepEqual(db.prepare('SELECT DISTINCT path FROM artifact').all().map((a) => a.path), ['essai-auto-edit.txt']);
   } finally {
     rmSync(out, { recursive: true, force: true });
   }

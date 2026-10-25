@@ -37,6 +37,12 @@ export function createRecorder(db) {
         engineVersion: null, runId, sessionId, payload: JSON.stringify({ tool_id: toolId, path, content }) });
     },
 
+    /** Arrêt demandé par l'humain : fait foi même sans code 130 (Windows n'a pas de SIGINT). */
+    cancel({ runId, sessionId, at = now() }) {
+      insertEvent.run({ at, source: 'board', direction: 'internal', type: 'turn.cancel', engineId: null,
+        engineVersion: null, runId, sessionId, payload: JSON.stringify({ by: 'human' }) });
+    },
+
     /** Fin du processus. */
     end({ runId, code, stderr = '', endedAt = now() }) {
       endRun.run({ id: runId, code, stderr: String(stderr).slice(-4096), endedAt });

@@ -164,7 +164,7 @@ Mesures du 25 octobre 2026, sous Linux avec Node.js 20.20.2 et Gemini CLI 0.65.0
 | Board, tas plafonné à 512 Mo (`maxHeapMb`) | 273 à 275 Mo | — |
 | `board-server` (esquisse du §6.3, faux Gemini CLI) | 78 Mo au repos, 81 Mo après 20 tours | — |
 
-Sous Windows (GitHub Actions, Windows Server, même lancement que le board) : 192 à 197 Mo par tour, pour le processus seul (`tasklist`), et 3,6 à 3,7 s par tour.
+Sous Windows (GitHub Actions, Windows Server, même lancement que le board, deux exécutions) : 192 à 222 Mo par tour, pour le processus seul (`tasklist`), et 3,6 à 3,9 s par tour.
 
 - Gemini CLI n'occupe de mémoire que pendant un tour : un processus par prompt (D9), qui se termine avec le tour. Au repos ne restent que `board-server` et l'onglet du navigateur.
 - Par défaut, Gemini CLI se relance dans un second processus pour s'attribuer un tas égal à 50 % de la RAM (en interactif, aussi pour redémarrer après un changement d'authentification). En headless, le board désactive cette relance : un processus Node.js de moins (environ 180 Mo) et plus d'une seconde gagnée par tour. `relaunch: true` la rétablit ; `maxHeapMb` plafonne le tas.
@@ -291,7 +291,7 @@ Vérifications du 25 octobre 2026 :
 - Lanceur et spike : 20 tests contre un faux Gemini CLI lancé comme `gemini.js` (sans shell), sous Linux et sous Windows, avec Node.js 20 et 22 (ordre des événements, ligne JSON coupée en deux écritures, prompt piégé transmis intact, `--session-id` puis `--resume`, politiques, relance désactivée et plafond du tas, connexion absente sans question sur stdin, codes 41, 42, 55, 130 et 144, binaire absent, point d'entrée relatif, paramètres refusés, masquage des chemins sous leurs formes Windows, mesure de la mémoire).
 - Esquisse de serveur : 25 contrôles sous Node.js 20.20.2 (WebSocket de bout en bout, journal et projections, bouton Arrêter et onglet fermé consignés par `turn.cancel`, règle de reprise après un premier tour en erreur, reprise après un arrêt brutal, relance désactivée et plafond du tas).
 - Contre Gemini CLI 0.65.0 réel : sans authentification, sortie 41 ; dans un dossier non approuvé, sortie 55 ; avec `--skip-trust` et une clé invalide, `init` (avec l'UUIDv7 fourni par le board), `message` (prompt intact), `result` en erreur, sortie 144 ; le tour suivant en `--resume` sort avec 42. Lancé comme le board (`node` et `gemini.js`, sans relance) : 267 à 283 Mo par tour.
-- En CI (GitHub Actions), le spike contre Gemini CLI 0.65.0 réel avec une clé invalide : sous Ubuntu, sortie 144 et 231 à 259 Mo par tour ; sous Windows, sortie 400 et 192 à 197 Mo par tour (processus seul) ; ni chemin local ni nom d'utilisateur dans la sortie.
+- En CI (GitHub Actions), le spike contre Gemini CLI 0.65.0 réel avec une clé invalide : sous Ubuntu, sortie 144 et 230 à 259 Mo par tour ; sous Windows, sortie 400 et 192 à 222 Mo par tour (processus seul) ; ni chemin local ni nom d'utilisateur dans la sortie.
 
 <details>
 <summary><strong><code>server.mjs</code> (esquisse) : cliquer pour déplier</strong></summary>

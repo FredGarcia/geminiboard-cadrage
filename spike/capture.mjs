@@ -6,11 +6,13 @@ import { parseArgs } from 'node:util';
 import { spawn } from 'node:child_process';
 import { performance } from 'node:perf_hooks';
 import { mkdtempSync, mkdirSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
-import { homedir, tmpdir } from 'node:os';
+import { homedir, tmpdir, userInfo } from 'node:os';
 import { dirname, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { runGemini } from '../packages/server/src/run-gemini.mjs';
+import { resolveGeminiEntry, runGemini } from '../packages/server/src/run-gemini.mjs';
 import { uuidv7 } from '../packages/server/src/uuidv7.mjs';
+import { MEMORY_SCOPE, sampleMemory } from './memory.mjs';
+import { createRedactor } from './redact.mjs';
 import { assistantText, buildScenarios, toolCalls, WORKSPACE_FILES } from './scenarios.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -18,7 +20,10 @@ const repoRoot = resolve(here, '..');
 
 const { values: opt } = parseArgs({
   options: {
-    bin: { type: 'string', default: 'gemini' },
+    entry: { type: 'string' },
+    bin: { type: 'string' },
+    'max-heap': { type: 'string' },
+    relaunch: { type: 'boolean', default: false },
     model: { type: 'string' },
     only: { type: 'string' },
     'with-yolo': { type: 'boolean', default: false },
@@ -33,11 +38,20 @@ if (Number(process.versions.node.split('.')[0]) < 20) fail(2, `Node.js 20 ou plu
 const timeoutMs = Number(opt.timeout) * 1000;
 if (!(timeoutMs > 0)) fail(2, `--timeout invalide : ${opt.timeout}`);
 const only = opt.only ? opt.only.split(',').map((s) => s.trim().toUpperCase()) : null;
+const maxHeapMb = opt['max-heap'] ? Number(opt['max-heap']) : undefined;
+if (maxHeapMb !== undefined && !(Number.isInteger(maxHeapMb) && maxHeapMb >= 64)) fail(2, `--max-heap invalide : ${opt['max-heap']}`);
+
+// Lancement comme le board : node + gemini.js (sans shell) ; à défaut, la commande gemini
+const entry = opt.entry ? resolve(opt.entry) : (opt.bin ? null : resolveGeminiEntry());
+const bin = opt.bin ?? 'gemini';
+const launchEnv = opt.relaunch ? {} : { GEMINI_CLI_NO_RELAUNCH: 'true' };
 
 // --- Prérequis : Gemini CLI présent ----------------------------------------------
-function geminiVersion(bin) {
+function geminiVersion() {
   return new Promise((done) => {
-    const c = spawn(bin, ['--version'], { stdio: ['ignore', 'pipe', 'pipe'], shell: process.platform === 'win32', windowsHide: true });
+    const [cmd, args] = entry ? [process.execPath, [entry, '--version']] : [bin, ['--version']];
+    const c = spawn(cmd, args, { stdio: ['ignore', 'pipe', 'pipe'], shell: !entry && process.platform === 'win32',
+      windowsHide: true, env: { ...process.env, ...launchEnv } });
     let out = '';
     c.stdout.on('data', (d) => { out += d; });
     const t = setTimeout(() => c.kill('SIGKILL'), 60000);
@@ -45,9 +59,10 @@ function geminiVersion(bin) {
     c.once('close', (code) => { clearTimeout(t); done(code === 0 ? { ok: true, version: out.trim() } : { ok: false, error: `code ${code}` }); });
   });
 }
-const version = await geminiVersion(opt.bin);
+const version = await geminiVersion();
 if (!version.ok) {
-  fail(2, `Gemini CLI introuvable (${version.error}). Installe-le avec « npm install -g @google/gemini-cli » ou indique --bin <chemin>.`);
+  fail(2, `Gemini CLI introuvable (${version.error}). Installe-le avec « npm install -g @google/gemini-cli », `
+    + 'ou indique --entry <chemin de gemini.js> ou --bin <commande>.');
 }
 
 // --- Dossier de travail synthétique, approuvé pour la session -------------------
@@ -57,27 +72,24 @@ for (const [file, content] of Object.entries(WORKSPACE_FILES)) {
   writeFileSync(join(workspace, file), content);
 }
 
-// Masquage des chemins locaux et de tout ce qui ressemble à une clé ou à une adresse
-const pairs = [];
-for (const [value, mask] of [[workspace, '<WORKSPACE>'], [realpathSync(workspace), '<WORKSPACE>'], [homedir(), '<HOME>']]) {
-  if (!value || value.length < 2) continue;
-  pairs.push([value, mask]);
-  const escaped = JSON.stringify(value).slice(1, -1); // forme échappée dans du JSON (chemins Windows)
-  if (escaped !== value) pairs.push([escaped, mask]);
-}
-pairs.sort((a, b) => b[0].length - a[0].length);
-const redact = (s) => {
-  let out = String(s ?? '');
-  for (const [value, mask] of pairs) out = out.split(value).join(mask);
-  return out
-    .replace(/AIza[0-9A-Za-z_-]{35}/g, '<API_KEY>')
-    .replace(/[\w.+-]+@[\w-]+(\.[\w-]+)+/g, '<EMAIL>');
-};
+// Masquage des chemins locaux (y compris leur forme longue sous Windows : realpath.native
+// développe les noms courts comme JEANDU~1), du nom d'utilisateur, des clés et des adresses
+const attempt = (f) => { try { return f(); } catch { return null; } };
+const redact = createRedactor([
+  [workspace, '<WORKSPACE>'], [attempt(() => realpathSync(workspace)), '<WORKSPACE>'],
+  [attempt(() => realpathSync.native(workspace)), '<WORKSPACE>'],
+  [repoRoot, '<REPO>'], [attempt(() => realpathSync.native(repoRoot)), '<REPO>'],
+  // Dossier d'installation de Gemini CLI, cité par les piles d'appels de stderr (file:///…/bundle/chunk-….js)
+  [entry && dirname(entry), '<GEMINI_CLI>'], [entry && attempt(() => realpathSync.native(dirname(entry))), '<GEMINI_CLI>'],
+  [homedir(), '<HOME>'], [attempt(() => realpathSync.native(homedir())), '<HOME>'],
+], { username: attempt(() => userInfo().username) });
 
 const stamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
 const outDir = join(resolve(opt.out), `spike-${stamp}`);
 mkdirSync(outDir, { recursive: true });
-console.log(`Gemini CLI ${version.version} · Node.js ${process.version}`);
+const launchText = `${entry ? 'node + gemini.js' : `commande ${bin}`}, relance ${opt.relaunch ? 'autorisée' : 'désactivée'}, `
+  + `plafond du tas : ${maxHeapMb ? `${maxHeapMb} Mo` : 'aucun'}`;
+console.log(`Gemini CLI ${version.version} · Node.js ${process.version} · ${launchText}`);
 console.log(`Sortie : ${outDir}`);
 
 // --- Exécution d'un tour ----------------------------------------------------------
@@ -95,7 +107,7 @@ async function runOne({ prompt, approvalMode, policies, sessionId, resume }) {
   let tFirst = null;
   const h = runGemini({
     prompt, cwd: workspace, sessionId, resume, approvalMode, model: opt.model,
-    skipTrust: true, policies: policies ?? [], bin: opt.bin,
+    skipTrust: true, policies: policies ?? [], entry: entry ?? undefined, bin, maxHeapMb, relaunch: opt.relaunch,
     onEvent: (e) => {
       const t = performance.now() - t0;
       if (e.type === 'init' && tInit === null) tInit = t;
@@ -104,6 +116,7 @@ async function runOne({ prompt, approvalMode, policies, sessionId, resume }) {
     },
   });
   active.add(h);
+  const memory = sampleMemory(h.pid);
   let timedOut = false;
   const timer = setTimeout(() => { timedOut = true; h.cancel(); }, timeoutMs);
   let result;
@@ -116,7 +129,7 @@ async function runOne({ prompt, approvalMode, policies, sessionId, resume }) {
     active.delete(h);
   }
   const ms = (v) => (v === null ? null : Math.round(v));
-  return { events, result, timedOut, args: h.args,
+  return { events, result, timedOut, args: h.args, memoryPeakMb: memory.stop(),
     timings: { init_ms: ms(tInit), first_assistant_ms: ms(tFirst), total_ms: ms(performance.now() - t0) } };
 }
 
@@ -137,6 +150,7 @@ function save(scenario, turn, run, ctx) {
     argv: ['gemini', ...run.args.map(redact)],
     exit: { code: run.result.code, signal: run.result.signal, meaning: run.result.meaning, timedOut: run.timedOut, result },
     timings: run.timings,
+    memoryPeakMb: run.memoryPeakMb,
     counts,
     tools: toolCalls(run.events),
     assistantText: redact(assistantText(run.events)).slice(0, 2000),
@@ -165,6 +179,7 @@ const sessionFor = (key) => {
 
 const metas = [];
 const fmtSec = (ms) => (ms === null ? '—' : `${(ms / 1000).toFixed(1).replace('.', ',')} s`);
+const fmtMb = (mb) => (mb === null || mb === undefined ? '—' : `${mb} Mo`);
 
 try {
   for (const sc of scenarios) {
@@ -185,7 +200,7 @@ try {
         const mark = check.ok === true ? 'OK' : check.ok === false ? 'KO' : '··';
         const resultStatus = meta.exit.result ? `result : ${meta.exit.result.status}` : 'sans result';
         console.log(`${sc.id} ${turn.padEnd(4)} ${t.approvalMode.padEnd(9)} code ${String(run.result.code)} (${run.result.meaning ?? resultStatus})`
-          + ` ${fmtSec(run.timings.total_ms)}${run.timedOut ? ' délai dépassé' : ''}  ${mark} ${check.label}`);
+          + ` ${fmtSec(run.timings.total_ms)} ${fmtMb(run.memoryPeakMb)}${run.timedOut ? ' délai dépassé' : ''}  ${mark} ${check.label}`);
         if (run.result.spawnError) abort ??= `Gemini CLI n'a pas pu être lancé (${run.result.meaning}).`;
         if (run.result.code === 41) abort ??= 'authentification absente : lance « gemini » une fois en interactif pour te connecter, ou définis GEMINI_API_KEY.';
         if (run.result.code === 55) abort ??= 'dossier non approuvé malgré --skip-trust : vérifie la version de Gemini CLI.';
@@ -200,6 +215,8 @@ try {
     node: process.version,
     platform: `${process.platform} ${process.arch}`,
     model: opt.model ?? 'par défaut',
+    launch: { mode: entry ? 'node + gemini.js' : 'commande', relaunch: opt.relaunch, maxHeapMb: maxHeapMb ?? null,
+      text: launchText, memoryScope: MEMORY_SCOPE },
     options: { only, withYolo: opt['with-yolo'], timeoutSeconds: timeoutMs / 1000 },
     turns: metas.length,
     abort,
@@ -229,7 +246,8 @@ function renderReport(env) {
   L.push(`- Date : ${env.date}`);
   L.push(`- Gemini CLI : ${env.gemini} · Node.js : ${env.node} · Plateforme : ${env.platform}`);
   L.push(`- Modèle : ${env.model} · Délai maximal par tour : ${env.options.timeoutSeconds} s`);
-  L.push('- Dossier de travail : synthétique, approuvé pour la session (`--skip-trust`) ; chemins masqués (`<WORKSPACE>`, `<HOME>`)');
+  L.push(`- Lancement : ${env.launch.text}`);
+  L.push('- Dossier de travail : synthétique, approuvé pour la session (`--skip-trust`) ; chemins et nom d\'utilisateur masqués (`<WORKSPACE>`, `<REPO>`, `<GEMINI_CLI>`, `<HOME>`, `<USER>`)');
   L.push('');
   if (env.abort) L.push(`> **Arrêt anticipé** : ${env.abort}`, '');
 
@@ -237,9 +255,9 @@ function renderReport(env) {
     const ms = metas.filter((m) => m.scenario === sc.id);
     if (!ms.length) continue;
     L.push(`## ${sc.id}. ${sc.title}`, '', sc.expectation, '');
-    L.push('| Tour | Mode | Code | Durée | Événements | Outils | Contrôle |', '|---|---|---|---|---|---|---|');
+    L.push('| Tour | Mode | Code | Durée | Mémoire | Événements | Outils | Contrôle |', '|---|---|---|---|---|---|---|---|');
     for (const m of ms) {
-      L.push(`| ${m.turn} | ${m.approvalMode} | ${cell(codeText(m))} | ${fmtSec(m.timings.total_ms)} | ${cell(countsText(m.counts))} | ${cell(toolsText(m.tools))} | ${cell(checkText(m.check))} |`);
+      L.push(`| ${m.turn} | ${m.approvalMode} | ${cell(codeText(m))} | ${fmtSec(m.timings.total_ms)} | ${fmtMb(m.memoryPeakMb)} | ${cell(countsText(m.counts))} | ${cell(toolsText(m.tools))} | ${cell(checkText(m.check))} |`);
     }
     L.push('');
   }
@@ -254,12 +272,18 @@ function renderReport(env) {
     L.push('');
   }
 
+  const mem = metas.map((m) => m.memoryPeakMb).filter((v) => typeof v === 'number');
+  const memoryLine = mem.length
+    ? `- Pic de mémoire de Gemini CLI par tour : médiane ${fmtMb(median(mem))}, maximum ${fmtMb(Math.max(...mem))} (${env.launch.text} ; mesure : ${env.launch.memoryScope})`
+    : '- Pic de mémoire de Gemini CLI par tour : non mesuré sur cette plateforme';
+
   const types = [...new Set(metas.flatMap((m) => Object.keys(m.counts)))].sort();
   const verdicts = metas.filter((m) => m.check.ok !== null);
   L.push('## Synthèse', '');
   L.push(`- Tours exécutés : ${metas.length} ; contrôles réussis : ${verdicts.filter((m) => m.check.ok).length} sur ${verdicts.length}`);
   L.push(`- Types d'événements observés : ${types.join(', ') || 'aucun'}`);
   L.push(`- Codes de sortie : ${[...new Set(metas.map((m) => m.exit.code))].join(', ')}`);
+  L.push(memoryLine);
   const errors = metas.filter((m) => m.exit.result?.status === 'error');
   const tidy = (s) => String(s ?? '—').replace(/\\[nrt]/g, ' ').replace(/\\+"/g, '"').replace(/\s+/g, ' ').trim();
   if (errors.length) L.push(`- Tours terminés par un \`result\` en erreur : ${errors.map((m) => `${m.scenario} ${m.turn}`).join(', ')} (premier message : ${cell(tidy(errors[0].exit.result.error)).slice(0, 160)})`);

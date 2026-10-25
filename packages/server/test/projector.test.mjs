@@ -2,7 +2,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { freshBoard, recordTurn, projections, T } from './helpers.mjs';
-import { stableId, toolKind } from '../src/projector.mjs';
+import { inside, stableId, toolKind } from '../src/projector.mjs';
 
 const S1 = '01a17300-0000-7000-8000-000000000001';
 const S2 = '01a17300-0000-7000-8000-000000000002';
@@ -204,4 +204,49 @@ test('O2 : effacer les projections puis rejouer le journal redonne le même éta
   assert.deepEqual(projections(db), before);
   proj.rebuild();
   assert.deepEqual(projections(db), before);
+});
+
+test('chemins : POSIX et Windows reconnus à leur forme, quel que soit le système', () => {
+  assert.equal(inside('/travail/projet', '/travail/projet/docs/a.md'), 'docs/a.md');
+  assert.equal(inside('/travail/projet', '/travail/projet'), '');
+  assert.equal(inside('/travail/projet', '/travail/projet-bis/a.md'), null);
+  assert.equal(inside('/travail/projet', '/travail/..projet/a.md'), null);
+  assert.equal(inside('C:\\Users\\Fred\\projet', 'c:\\users\\fred\\projet\\docs\\a.md'), 'docs/a.md');
+  assert.equal(inside('C:\\Users\\Fred\\projet', 'D:\\projet\\a.md'), null);
+  assert.equal(inside('\\\\serveur\\partage\\projet', '\\\\serveur\\partage\\projet\\x\\y.sql'), 'x/y.sql');
+  assert.equal(inside('C:\\Users\\Fred\\projet', 'docs\\a.md'), null, 'chemin relatif : pas sous la racine');
+});
+
+test('Windows : projet trouvé sans tenir compte de la casse, artefact relatif au projet', () => {
+  const { db, rec, proj } = freshBoard();
+  rec.board({ type: 'project.upsert', payload: { id: P, slug: 'board', name: 'Board', root_path: 'C:\\Users\\Fred\\GeminiBoard' }, at: T(0) });
+  recordTurn(rec, { sessionId: S1, runId: 'w1', prompt: 'Écris', start: 1, cwd: 'c:\\users\\fred\\geminiboard\\packages', events: [
+    { type: 'tool_use', tool_name: 'write_file', tool_id: 'x1', parameters: { file_path: 'C:\\Users\\Fred\\GeminiBoard\\docs\\Notes.MD', content: 'v1' } },
+    { type: 'tool_result', tool_id: 'x1', status: 'success' },
+    { type: 'tool_use', tool_name: 'write_file', tool_id: 'x2', parameters: { file_path: 'D:\\ailleurs\\script.sql', content: 'select 1;' } },
+    { type: 'tool_result', tool_id: 'x2', status: 'success' },
+    { type: 'result', status: 'success' },
+  ] });
+  proj.projectPending();
+  assert.equal(db.prepare('SELECT project_id FROM conversation').get().project_id, P);
+  const arts = db.prepare('SELECT path, title, kind, language FROM artifact ORDER BY path').all();
+  assert.deepEqual(arts.map((a) => [a.path, a.title, a.kind, a.language]), [
+    ['D:\\ailleurs\\script.sql', 'script.sql', 'code', 'sql'],
+    ['docs/Notes.MD', 'Notes.MD', 'document', 'markdown'],
+  ]);
+});
+
+test('annulation demandée : fait foi sans code 130 (Windows), mais pas contre un result en succès', () => {
+  const { db, rec, proj } = freshBoard();
+  // Windows : processus arrêté de force, code 1, aucun result
+  recordTurn(rec, { sessionId: S1, runId: 'c1', prompt: 'long', close: false, events: [{ type: 'init', session_id: S1, model: 'm' }] });
+  rec.cancel({ runId: 'c1', sessionId: S1, at: T(5) });
+  rec.end({ runId: 'c1', code: 1, stderr: '', endedAt: T(6) });
+  // Arrêt demandé trop tard : le tour avait abouti
+  recordTurn(rec, { sessionId: S2, runId: 'c2', prompt: 'court', start: 10, close: false, events: [{ type: 'result', status: 'success' }] });
+  rec.cancel({ runId: 'c2', sessionId: S2, at: T(13) });
+  rec.end({ runId: 'c2', code: 0, endedAt: T(14) });
+  proj.projectPending();
+  assert.deepEqual(db.prepare('SELECT status, stop_reason FROM turn ORDER BY id').all().map((t) => [t.status, t.stop_reason]),
+    [['cancelled', 'cancelled'], ['completed', 'end_turn']]);
 });

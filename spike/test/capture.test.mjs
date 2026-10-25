@@ -12,7 +12,7 @@ const FAKE = fileURLToPath(new URL('../../packages/server/test/fake-gemini.mjs',
 
 function capture(args, env = {}) {
   const out = mkdtempSync(join(tmpdir(), 'gb-spike-test-'));
-  const r = spawnSync(process.execPath, [CAPTURE, '--bin', FAKE, '--out', out, ...args],
+  const r = spawnSync(process.execPath, [CAPTURE, '--entry', FAKE, '--out', out, ...args],
     { encoding: 'utf8', env: { ...process.env, ...env }, timeout: 120000 });
   const [run] = readdirSync(out);
   return { r, out, dir: run ? join(out, run) : null };
@@ -29,7 +29,7 @@ test('parcours complet : fichiers, contrôles S3, reprise S2, masquage', () => {
 
     // S3 : le faux CLI applique les règles attendues, les contrôles doivent tous passer
     for (const t of ['T1', 'T2', 'T3', 'T4', 'T5', 'T6']) assert.equal(meta(dir, 'S3', t).check.ok, true, t);
-    assert.ok(meta(dir, 'S3', 'T4').argv.some((a) => a.includes('policy-ls.toml')));
+    assert.ok(meta(dir, 'S3', 'T4').argv.some((a) => /^<REPO>[\\/]spike[\\/]policy-ls\.toml$/.test(a)));
 
     // S2 : même session, premier tour en --session-id, puis --resume, y compris en parallèle
     const ids = ['T1', 'T2', 'T3a', 'T3b', 'T4'].map((t) => meta(dir, 'S2', t).session);
@@ -102,6 +102,48 @@ test('Gemini CLI introuvable : code 2 avant toute exécution', () => {
     assert.equal(r.status, 2);
     assert.match(r.stderr, /Gemini CLI introuvable/);
     assert.equal(readdirSync(out).length, 0);
+  } finally {
+    rmSync(out, { recursive: true, force: true });
+  }
+});
+
+test('masquage : formes Windows des chemins, nom court, nom d\'utilisateur, clés et adresses', async () => {
+  const { createRedactor } = await import('../redact.mjs');
+  const shortWs = 'C:\\Users\\JEANDU~1\\AppData\\Local\\Temp\\geminiboard-spike-abc123';
+  const longWs = 'C:\\Users\\jean.dupont\\AppData\\Local\\Temp\\geminiboard-spike-abc123';
+  const win = createRedactor([[shortWs, '<WORKSPACE>'], [longWs, '<WORKSPACE>'],
+    ['C:\\Users\\jean.dupont\\dev\\geminiboard', '<REPO>'], ['C:\\Users\\jean.dupont', '<HOME>']],
+  { windows: true, username: 'jean.dupont' });
+  const cases = [
+    [JSON.stringify({ file_path: `${longWs}\\notes.md` }), '{"file_path":"<WORKSPACE>\\\\notes.md"}'],
+    [JSON.stringify({ output: JSON.stringify({ cwd: shortWs }) }), '{"output":"{\\"cwd\\":\\"<WORKSPACE>\\"}"}'],
+    ['c:/users/JEAN.DUPONT/AppData/Local/Temp/geminiboard-spike-abc123/src/calc.js', '<WORKSPACE>/src/calc.js'],
+    ['--policy C:\\Users\\jean.dupont\\dev\\geminiboard\\spike\\policy-ls.toml', '--policy <REPO>\\spike\\policy-ls.toml'],
+    ['C:\\Users\\JEANDU~1\\Desktop\\x.txt et D:\\Users\\autre\\y', '<HOME>\\Desktop\\x.txt et <HOME>\\y'],
+    ['Bonjour Jean.Dupont, ton fichier jean.dupontel reste.', 'Bonjour <USER>, ton fichier jean.dupontel reste.'],
+    ['jean.dupont@example.com AIza' + 'x'.repeat(35), '<EMAIL> <API_KEY>'],
+  ];
+  for (const [input, expected] of cases) assert.equal(win(input), expected, input);
+  // Hors Windows : comparaison exacte, sensible à la casse
+  const posix = createRedactor([['/home/fred', '<HOME>']], { windows: false, username: 'fred' });
+  assert.equal(posix('/home/fred/a /home/Fred/b fred'), '<HOME>/a /home/Fred/b <USER>');
+});
+
+test('mémoire : pic mesuré par tour (Linux), lecture des formats de tasklist (Windows)', async () => {
+  const { parseTasklistKb } = await import('../memory.mjs');
+  assert.equal(parseTasklistKb('"node.exe","1234","Console","1","215 432 Ko"'), 215432);
+  assert.equal(parseTasklistKb('"node.exe","1234","Console","1","215,432 K"'), 215432);
+  assert.equal(parseTasklistKb('INFO: No tasks are running'), 0);
+  if (process.platform !== 'linux') return;
+  const { r, out, dir } = capture(['--only', 'S4', '--max-heap', '256']);
+  try {
+    assert.equal(r.status, 0, r.stderr);
+    const m = meta(dir, 'S4', 'T1');
+    assert.ok(m.memoryPeakMb > 10, `pic mesuré : ${m.memoryPeakMb}`);
+    const env = JSON.parse(read(dir, 'environnement.json'));
+    assert.deepEqual([env.launch.mode, env.launch.relaunch, env.launch.maxHeapMb], ['node + gemini.js', false, 256]);
+    assert.match(read(dir, 'rapport.md'), /Pic de mémoire de Gemini CLI par tour : médiane \d+ Mo/);
+    assert.ok(m.stderrTail.includes('relance=non') && m.stderrTail.includes('--max-old-space-size=256'));
   } finally {
     rmSync(out, { recursive: true, force: true });
   }

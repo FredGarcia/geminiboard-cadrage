@@ -38,9 +38,23 @@ export function projections(db) {
 
 /** Dossier de travail simulé : remplace le masque <WORKSPACE> des fixtures au rechargement. */
 export const FIXTURE_WORKSPACE = '/fixtures/workspace';
+/** Même chose pour un corpus produit sous Windows, dont les chemins gardent leur forme Windows. */
+export const FIXTURE_WORKSPACE_WIN = 'C:\\fixtures\\workspace';
+
+/** Dossier de travail simulé selon la plateforme qui a produit le corpus (environnement.json). */
+export function fixtureWorkspace(dir) {
+  try {
+    const env = JSON.parse(readFileSync(join(dir, 'environnement.json'), 'utf8'));
+    return String(env.platform ?? '').startsWith('win32') ? FIXTURE_WORKSPACE_WIN : FIXTURE_WORKSPACE;
+  } catch {
+    return FIXTURE_WORKSPACE;
+  }
+}
 
 /** Liste des tours d'une sortie du spike, dans l'ordre des scénarios puis des tours. */
 export function spikeTurns(dir) {
+  // Le masque est remplacé dans le texte JSON : le chemin y prend sa forme échappée (C:\\fixtures\\workspace)
+  const workspace = JSON.stringify(fixtureWorkspace(dir)).slice(1, -1);
   const scenarios = readdirSync(dir).filter((d) => /^S\d+$/.test(d)).sort((a, b) => a.localeCompare(b, 'fr', { numeric: true }));
   return scenarios.flatMap((s) => readdirSync(join(dir, s))
     .filter((f) => f.endsWith('.meta.json'))
@@ -50,7 +64,7 @@ export function spikeTurns(dir) {
       const jsonl = join(dir, s, f.replace(/\.meta\.json$/, '.jsonl'));
       const events = existsSync(jsonl)
         ? readFileSync(jsonl, 'utf8').split('\n').filter(Boolean)
-          .map((l) => JSON.parse(l.split('<WORKSPACE>').join(FIXTURE_WORKSPACE))) : [];
+          .map((l) => JSON.parse(l.split('<WORKSPACE>').join(workspace))) : [];
       return { meta, events };
     }));
 }
@@ -58,11 +72,12 @@ export function spikeTurns(dir) {
 /** Charge une sortie du spike dans le journal, comme l'aurait fait le serveur. */
 export function loadSpikeRun(rec, dir) {
   const turns = spikeTurns(dir);
+  const cwd = fixtureWorkspace(dir);
   turns.forEach(({ meta, events }, i) => {
     const runId = stableId('fixture', basename(dir), meta.scenario, meta.turn);
     const stamps = events.map((e) => e.timestamp).filter((t) => typeof t === 'string');
     const startedAt = stamps[0] ?? T(i * 10);
-    rec.start({ runId, sessionId: meta.session.id, cwd: FIXTURE_WORKSPACE, args: meta.argv.slice(1),
+    rec.start({ runId, sessionId: meta.session.id, cwd, args: meta.argv.slice(1),
       prompt: meta.prompt, approvalMode: meta.approvalMode, resume: meta.session.resume, startedAt });
     for (const ev of events) rec.event({ runId, sessionId: meta.session.id, event: ev, at: ev.timestamp ?? startedAt });
     rec.end({ runId, code: meta.exit.code, stderr: meta.stderrTail ?? '', endedAt: stamps.at(-1) ?? startedAt });

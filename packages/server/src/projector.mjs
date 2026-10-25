@@ -3,9 +3,25 @@
 // - Les projections ne dépendent que du journal (horodatages et clés compris) :
 //   rebuild() les reconstruit à l'identique (objectif O2 du cadrage).
 import { createHash } from 'node:crypto';
-import { basename, extname, isAbsolute, relative, sep } from 'node:path';
+import { posix, win32 } from 'node:path';
 
-export const PROJECTOR_VERSION = 1;
+export const PROJECTOR_VERSION = 2;
+
+// Chemins Windows (C:\…, \\serveur\…) ou POSIX, reconnus à leur forme et non au système qui rejoue :
+// un journal écrit sous Windows se projette à l'identique sous Linux (et inversement).
+const isWindowsPath = (p) => /^[A-Za-z]:[\\/]/.test(p) || p.startsWith('\\\\');
+const pathApi = (...paths) => (paths.some((p) => isWindowsPath(String(p ?? ''))) ? win32 : posix);
+
+/** Chemin de `path` relatif à `root`, avec « / » ; '' si égal ; null s'il n'est pas sous root. */
+export function inside(root, path) {
+  if (!root || !path) return null;
+  const api = pathApi(root, path);
+  if (!api.isAbsolute(path)) return null;
+  const rel = api.relative(root, path); // insensible à la casse pour les chemins Windows
+  if (rel === '') return '';
+  if (rel === '..' || rel.startsWith(`..${api.sep}`) || api.isAbsolute(rel)) return null;
+  return rel.split(api.sep).join('/');
+}
 
 /** Identifiant stable dérivé de ses composantes (UUID version 8, RFC 9562). */
 export function stableId(...parts) {
@@ -43,7 +59,8 @@ const FILE_TYPES = {
   '.py': ['code', 'python', 'text/x-python'], '.css': ['code', 'css', 'text/css'],
   '.scss': ['code', 'scss', 'text/plain'], '.sh': ['code', 'shell', 'text/x-shellscript'],
 };
-const fileType = (path) => FILE_TYPES[extname(path).toLowerCase()] ?? ['file', null, 'text/plain'];
+const fileType = (path) => FILE_TYPES[pathApi(path).extname(path).toLowerCase()] ?? ['file', null, 'text/plain'];
+const baseName = (path) => pathApi(path).basename(path);
 
 const sha256 = (s) => createHash('sha256').update(s).digest('hex');
 const int = (v) => (Number.isFinite(v) ? Math.round(v) : null); // colonnes INTEGER des tables STRICT
@@ -60,11 +77,7 @@ const lastLine = (text) => String(text ?? '').split('\n').map((l) => l.trim()).f
 const parse = (json) => { try { return JSON.parse(json); } catch { return null; } };
 
 /** Chemin relatif au dossier racine s'il s'y trouve, sinon chemin absolu inchangé. */
-function relativeTo(root, path) {
-  if (!root || !isAbsolute(path)) return path;
-  const rel = relative(root, path);
-  return rel && !rel.startsWith('..') && !isAbsolute(rel) ? rel.split(sep).join('/') : path;
-}
+const relativeTo = (root, path) => inside(root, path) || path;
 
 export function createProjector(db, { version = PROJECTOR_VERSION } = {}) {
   const q = {
@@ -134,8 +147,7 @@ export function createProjector(db, { version = PROJECTOR_VERSION } = {}) {
   function projectFor(cwd) {
     let best = null;
     for (const p of q.projects.all()) {
-      const inside = cwd === p.root_path || String(cwd).startsWith(p.root_path.endsWith(sep) ? p.root_path : p.root_path + sep);
-      if (inside && (!best || p.root_path.length > best.root_path.length)) best = p;
+      if (inside(p.root_path, cwd) !== null && (!best || p.root_path.length > best.root_path.length)) best = p;
     }
     return best;
   }
@@ -153,7 +165,7 @@ export function createProjector(db, { version = PROJECTOR_VERSION } = {}) {
     if (!artifact) {
       artifact = { id: stableId('artifact', conv.project_id ?? conv.id, path) };
       q.insertArtifact.run({ id: artifact.id, projectId: conv.project_id, conversationId: conv.id, kind,
-        title: basename(path), path, language, at });
+        title: baseName(path), path, language, at });
     }
     q.insertArtifactVersion.run({ artifactId: artifact.id, version: q.nextArtifactVersion.get(artifact.id).n, content,
       mime, sha256: sha256(content), size: Buffer.byteLength(content), toolCallId: tool.id, at });
@@ -256,14 +268,22 @@ export function createProjector(db, { version = PROJECTOR_VERSION } = {}) {
     }
     flush();
 
-    // Clôture du tour : result fait foi ; à défaut, le code de sortie du processus
+    // Clôture du tour : un result en succès fait foi ; puis l'arrêt demandé par l'humain (turn.cancel),
+    // qui vaut aussi sous Windows où le code de sortie n'est pas 130 ; puis result en erreur ; puis le code de sortie
+    const cancelRequested = events.some((e) => e.source === 'board' && e.type === 'turn.cancel');
     let status;
     let stopReason;
     let errorMessage = null;
-    if (result) {
-      status = result.status === 'success' ? 'completed' : 'error';
-      stopReason = result.status === 'success' ? 'end_turn' : (result.error?.type ?? 'error');
-      errorMessage = status === 'error' ? (result.error?.message ?? lastError) : null;
+    if (result?.status === 'success') {
+      status = 'completed';
+      stopReason = 'end_turn';
+    } else if (cancelRequested) {
+      status = 'cancelled';
+      stopReason = 'cancelled';
+    } else if (result) {
+      status = 'error';
+      stopReason = result.error?.type ?? 'error';
+      errorMessage = result.error?.message ?? lastError;
     } else if (run.exit_code === 130 || run.exit_code === null) {
       status = 'cancelled';
       stopReason = 'cancelled';

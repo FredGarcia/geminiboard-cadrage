@@ -30,7 +30,8 @@ if (process.env.FAKE_GEMINI_EXIT === '41') {
   process.exit(41);
 }
 
-process.stderr.write(`fake args=${JSON.stringify(args)}\n`);
+process.stderr.write(`fake args=${JSON.stringify(args)} relance=${process.env.GEMINI_CLI_NO_RELAUNCH === 'true' ? 'non' : 'oui'}`
+  + ` execArgv=${JSON.stringify(process.execArgv)}\n`);
 out({ type: 'init', timestamp: ts(), session_id: sessionId, model: 'fake-model' });
 out({ type: 'message', timestamp: ts(), role: 'user', content: prompt });
 

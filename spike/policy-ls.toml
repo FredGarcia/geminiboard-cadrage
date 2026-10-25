@@ -1,0 +1,7 @@
+# Politique de test du spike (S3, tour T4), chargée par --policy pour ce seul tour.
+# Autorise les commandes shell qui commencent par « ls » ; tout le reste suit le mode d'approbation.
+[[rule]]
+toolName = "run_shell_command"
+commandPrefix = "ls"
+decision = "allow"
+priority = 100

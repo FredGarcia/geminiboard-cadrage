@@ -1,6 +1,6 @@
 # GeminiBoard : cadrage
 
-> **Statut** : proposition v0.2, à ratifier par PR · **Date** : 25 octobre 2026
+> **Statut** : v0.2 ratifiée le 25 octobre 2026 (PR #2) · étape 1 en cours : spike de capture (`spike/`)
 >
 > **Portée de ce dépôt** : le cadrage, le code du board (D11) et les composants portables (D12).
 
@@ -194,6 +194,7 @@ Corrections apportées à l'exemple proposé, vérifiées sur Gemini CLI 0.65.0 
 
 - **Autorisations.** Personne ne peut confirmer un outil en cours de tour : le moteur de politiques transforme toute demande de confirmation en refus. Le mode d'approbation se choisit donc avant l'envoi : `default` (les outils à confirmer, comme l'écriture de fichiers ou le shell, sont refusés), `auto_edit` (modifications de fichiers acceptées), `yolo` (tout est accepté), `plan` (lecture seule). Des règles de politique (`policies/*.toml`) peuvent autoriser des commandes précises.
 - **Dossier approuvé.** Dans un dossier non approuvé, le mode headless s'arrête avec le code 55. Le board ne passe `--skip-trust` que pour un projet dont l'humain a approuvé le dossier (`project.trusted`), et journalise cette décision.
+- **Création de la session.** Gemini CLI n'enregistre une session qu'après un tour abouti. Si le premier tour échoue (erreur d'API, par exemple), `--resume` sort ensuite avec le code 42 (« No previous sessions found for this project »). Le board ne reprend donc une session qu'après un `result` en succès ; sinon, il la recrée avec `--session-id`.
 - **Codes de sortie.** 0 (succès), 1 (erreur générale), 41 (authentification), 42 (entrée invalide), 52 (configuration), 53 (limite de tours), 55 (dossier non approuvé), 130 (annulation). Une erreur d'API sort avec le statut HTTP modulo 256 (400 donne 144) : seul l'événement `result` fait foi.
 - **Événements.** Tous portent `type` et `timestamp` ; champs propres à chaque type, relevés dans le code source (`packages/core/src/output/types.ts`) :
 
@@ -208,108 +209,16 @@ Corrections apportées à l'exemple proposé, vérifiées sur Gemini CLI 0.65.0 
 
 ### 6.3 Implémentation de référence (Node.js 20)
 
-`run-gemini.mjs` lance un tour ; `server.mjs` l'expose en WebSocket et journalise chaque événement dans SQLite. Le prompt ne passe jamais par la ligne de commande : il n'apparaît ni dans `ps`, ni dans `engine_run.argv_json`.
+Le lanceur [`packages/server/src/run-gemini.mjs`](packages/server/src/run-gemini.mjs) lance un tour. L'esquisse `server.mjs` ci-dessous l'expose en WebSocket et journalise chaque événement dans SQLite ; elle entrera dans `packages/server` à l'étape 4. Le prompt ne passe jamais par la ligne de commande : il n'apparaît ni dans `ps`, ni dans `engine_run.argv_json`.
 
-Vérifications du 25 octobre 2026, sous Node.js 20.20.2 :
+Vérifications du 25 octobre 2026 :
 
-- 27 contrôles contre un faux Gemini CLI, répétés trois fois : ordre des événements, ligne JSON coupée en deux écritures, prompt piégé (`$(…)`, guillemets, apostrophes, retours à la ligne) transmis intact, `--session-id` puis `--resume`, codes 42, 55 et 130, binaire absent, paramètres refusés, WebSocket de bout en bout, journal SQLite.
-- Contre Gemini CLI 0.65.0 réel : sans authentification, sortie 41 ; dans un dossier non approuvé, sortie 55 ; avec `--skip-trust` et une clé invalide, `init` (avec l'UUIDv7 fourni par le board), `message` (prompt intact), `result` en erreur, sortie 144.
-
-<details>
-<summary><strong><code>run-gemini.mjs</code> : cliquer pour déplier</strong></summary>
-
-```js
-// run-gemini.mjs : lance un tour de Gemini CLI en mode headless et relaie ses événements.
-// Node.js 20 ou plus, sans dépendance.
-import { spawn } from 'node:child_process';
-import { createInterface } from 'node:readline';
-
-export const APPROVAL_MODES = ['default', 'auto_edit', 'yolo', 'plan'];
-
-// Codes de sortie de Gemini CLI 0.65. Une erreur d'API sort avec le statut HTTP modulo 256
-// (400 donne 144) : c'est l'événement `result` (status: 'error') qui fait foi.
-export const EXIT_CODES = {
-  0: 'succès', 1: 'erreur générale', 41: 'authentification', 42: 'entrée invalide',
-  52: 'configuration', 53: 'limite de tours', 55: 'dossier non approuvé', 130: 'annulation',
-};
-
-/**
- * @param {object}   o
- * @param {string}   o.prompt        texte saisi, transmis par stdin (jamais par la ligne de commande)
- * @param {string}   o.cwd           dossier racine du projet
- * @param {string}   o.sessionId     identifiant de la discussion, choisi par le board (UUID)
- * @param {boolean}  o.resume        false au premier tour (--session-id), true ensuite (--resume)
- * @param {string}  [o.approvalMode] default | auto_edit | yolo | plan
- * @param {string}  [o.model]
- * @param {boolean} [o.skipTrust]    true si l'humain a approuvé le dossier du projet dans le board
- * @param {string}  [o.bin]          binaire gemini (paquet npm @google/gemini-cli)
- * @param {object}  [o.env]          variables ajoutées à l'environnement du processus
- * @param {(event: object) => void} o.onEvent  appelé pour chaque ligne JSONL
- */
-export function runGemini({ prompt, cwd, sessionId, resume, approvalMode = 'default', model, skipTrust = false,
-  bin = 'gemini', env, onEvent }) {
-  if (!/^[A-Za-z0-9_-]+$/.test(sessionId)) throw new Error(`sessionId invalide : ${sessionId}`);
-  if (!APPROVAL_MODES.includes(approvalMode)) throw new Error(`mode d'approbation inconnu : ${approvalMode}`);
-  if (model && !/^[\w.-]+$/.test(model)) throw new Error(`modèle invalide : ${model}`);
-
-  const args = ['--output-format', 'stream-json', '--approval-mode', approvalMode,
-    resume ? '--resume' : '--session-id', sessionId];
-  if (model) args.push('--model', model);
-  if (skipTrust) args.push('--skip-trust'); // sinon, dossier non approuvé : sortie 55
-
-  const child = spawn(bin, args, {
-    cwd,
-    env: { ...process.env, ...env },
-    stdio: ['pipe', 'pipe', 'pipe'],
-    shell: process.platform === 'win32', // gemini.cmd sous Windows ; le prompt ne passe pas par le shell
-    windowsHide: true,
-  });
-
-  child.stdin.on('error', () => {}); // processus déjà terminé : l'erreur remonte par 'close'
-  child.stdin.end(prompt);            // stdin non interactif : Gemini CLI passe en headless
-
-  let observedSessionId = null;
-  const lines = createInterface({ input: child.stdout, crlfDelay: Infinity });
-  lines.on('line', (line) => {
-    if (!line.trim()) return;
-    let event;
-    try { event = JSON.parse(line); } catch { event = { type: 'raw', line }; }
-    if (event.type === 'init') observedSessionId = event.session_id;
-    onEvent(event);
-  });
-
-  let stderr = '';
-  child.stderr.setEncoding('utf8');
-  child.stderr.on('data', (chunk) => { stderr = (stderr + chunk).slice(-16384); });
-
-  let cancelled = false;
-  const done = new Promise((resolve, reject) => {
-    child.once('error', reject); // binaire introuvable, droits...
-    child.once('close', (code, signal) => resolve({
-      code, signal, cancelled,
-      // Arrêt demandé : code 130, ou fin par signal si l'arrêt arrive très tôt
-      meaning: cancelled ? EXIT_CODES[130] : (EXIT_CODES[code] ?? null),
-      sessionId: observedSessionId, stderr,
-    }));
-  });
-
-  let killTimer = null;
-  done.finally(() => clearTimeout(killTimer)).catch(() => {});
-  const cancel = () => {
-    if (child.exitCode !== null || child.signalCode !== null) return;
-    cancelled = true;
-    child.kill('SIGINT');
-    killTimer = setTimeout(() => child.kill('SIGKILL'), 5000);
-  };
-
-  return { pid: child.pid, args, done, cancel };
-}
-```
-
-</details>
+- `npm test`, sans dépendance : 13 tests du lanceur et du spike contre un faux Gemini CLI, sous Node.js 20.20.2 et 22.23 (ordre des événements, ligne JSON coupée en deux écritures, prompt piégé transmis intact, `--session-id` puis `--resume`, politiques, codes 42, 55, 130 et 144, binaire absent, paramètres refusés, masquage des chemins).
+- Esquisse de serveur : 29 contrôles sous Node.js 20.20.2 (WebSocket de bout en bout, journal SQLite, annulation, règle de reprise après un premier tour en erreur).
+- Contre Gemini CLI 0.65.0 réel : sans authentification, sortie 41 ; dans un dossier non approuvé, sortie 55 ; avec `--skip-trust` et une clé invalide, `init` (avec l'UUIDv7 fourni par le board), `message` (prompt intact), `result` en erreur, sortie 144 ; le tour suivant en `--resume` sort avec 42.
 
 <details>
-<summary><strong><code>server.mjs</code> : cliquer pour déplier</strong></summary>
+<summary><strong><code>server.mjs</code> (esquisse) : cliquer pour déplier</strong></summary>
 
 ```js
 // server.mjs : esquisse du board-server. Une route WebSocket pilote Gemini CLI,
@@ -318,20 +227,11 @@ export function runGemini({ prompt, cwd, sessionId, resume, approvalMode = 'defa
 import Fastify from 'fastify';
 import websocket from '@fastify/websocket';
 import Database from 'better-sqlite3';
-import { createHash, randomBytes } from 'node:crypto';
+import { createHash } from 'node:crypto';
 import { mkdirSync, readFileSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { runGemini } from './run-gemini.mjs';
-
-// UUIDv7 : tri chronologique des discussions, accepté par --session-id
-export function uuidv7() {
-  const b = randomBytes(16);
-  b.writeUIntBE(Date.now(), 0, 6);
-  b[6] = (b[6] & 0x0f) | 0x70;
-  b[8] = (b[8] & 0x3f) | 0x80;
-  const h = b.toString('hex');
-  return `${h.slice(0, 8)}-${h.slice(8, 12)}-${h.slice(12, 16)}-${h.slice(16, 20)}-${h.slice(20)}`;
-}
+import { uuidv7 } from './uuidv7.mjs';
 
 function openJournal(dbPath, migrationFile) {
   mkdirSync(dirname(dbPath), { recursive: true });
@@ -361,8 +261,10 @@ export async function buildServer({ dbPath, migrationFile, bin = 'gemini', cwd =
     VALUES (?, 'gemini-cli', 'headless', ?, ?, ?)`);
   const endRun = db.prepare(`UPDATE engine_run SET ended_at = strftime('%Y-%m-%dT%H:%M:%fZ','now'),
     exit_code = ?, stderr_tail = ? WHERE id = ?`);
+  // Gemini CLI n'enregistre une session qu'après un tour abouti : sinon, --resume sort avec 42
   const sessionStarted = db.prepare(`SELECT 1 FROM event
-    WHERE engine_session_id = ? AND source = 'headless' AND type = 'init' LIMIT 1`);
+    WHERE engine_session_id = ? AND source = 'headless' AND type = 'result'
+      AND json_extract(payload_json, '$.status') = 'success' LIMIT 1`);
 
   const app = Fastify({ logger: false });
   await app.register(websocket);
@@ -1157,7 +1059,7 @@ Chaque étape se termine par une ratification en PR.
 | Étape | Livrable | Point de ratification |
 |---|---|---|
 | 0. Cadrage | ce README, décisions D1 à D12 | fusion de cette PR |
-| 1. Spike de capture | `run-gemini.mjs` lancé sur le poste, avec un vrai compte : corpus d'événements dans `fixtures/` ; points S1 à S4 | corpus |
+| 1. Spike de capture | `spike/capture.mjs` (scénarios S1 à S4) lancé sur le poste avec un vrai compte ; corpus d'événements dans `fixtures/` | corpus |
 | 2. Schéma v1 | `migrations/001_init.sql` ajusté au corpus, projecteur rejoué sur les fixtures, script de contrôle | schéma v1 |
 | 3. Skill de construction | skill `geminiboard` et commandes TOML qui guident Gemini CLI dans la construction du board, dans ce dépôt | skill 1.0.0 |
 | 4. Serveur | `packages/server` : lanceur, journal, projecteur, API, WebSocket | une discussion de bout en bout |

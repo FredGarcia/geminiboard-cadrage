@@ -3,11 +3,14 @@
   "private": true,
   "description": "Interface locale au style de Claude pour piloter Gemini CLI, avec journal SQLite",
   "type": "module",
+  "workspaces": [
+    "packages/*"
+  ],
   "engines": {
     "node": ">=20"
   },
   "scripts": {
-    "test": "node --test packages/server/test/run-gemini.test.mjs spike/test/capture.test.mjs",
+    "test": "node --test packages/server/test/run-gemini.test.mjs packages/server/test/schema.test.mjs packages/server/test/projector.test.mjs packages/server/test/corpus.test.mjs spike/test/capture.test.mjs",
     "spike": "node spike/capture.mjs"
   }
 }

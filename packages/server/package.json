@@ -5,7 +5,10 @@
   "engines": {
     "node": ">=20"
   },
+  "dependencies": {
+    "better-sqlite3": "12.11.1"
+  },
   "scripts": {
-    "test": "node --test test/run-gemini.test.mjs"
+    "test": "node --test test/run-gemini.test.mjs test/schema.test.mjs test/projector.test.mjs test/corpus.test.mjs"
   }
 }

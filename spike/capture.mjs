@@ -224,7 +224,8 @@ try {
   writeFileSync(join(outDir, 'environnement.json'), `${JSON.stringify(env, null, 2)}\n`);
   writeFileSync(join(outDir, 'rapport.md'), renderReport(env));
   if (opt['keep-workspace']) console.log(`Dossier de travail conservé : ${workspace}`);
-  else rmSync(workspace, { recursive: true, force: true });
+  // Reprises : sous Windows, un fichier peut rester verrouillé un instant (antivirus, indexation)
+  else rmSync(workspace, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
 }
 
 console.log(abort ? `Arrêt anticipé : ${abort}` : 'Spike terminé.');

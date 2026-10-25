@@ -78,8 +78,10 @@ export function runGemini({ prompt, cwd, sessionId, resume, approvalMode = 'defa
   const nodeArgs = script && maxHeapMb ? [`--max-old-space-size=${maxHeapMb}`] : [];
   const child = spawn(script ? process.execPath : bin, script ? [...nodeArgs, script, ...args] : args, {
     cwd,
-    // GEMINI_CLI_NO_RELAUNCH : un seul processus au lieu de deux (environ 280 Mo au lieu de 460 Mo par tour)
-    env: { ...process.env, ...(relaunch ? {} : { GEMINI_CLI_NO_RELAUNCH: 'true' }), ...env },
+    // GEMINI_CLI_NO_RELAUNCH : un seul processus au lieu de deux (environ 280 Mo au lieu de 460 Mo par tour).
+    // NO_BROWSER : sans connexion Google en cache, Gemini CLI sort avec le code 41 ; sinon, sur un poste
+    // avec navigateur (Windows), il demanderait sur stdin l'accord de l'ouvrir et prendrait le prompt pour la réponse
+    env: { ...process.env, NO_BROWSER: 'true', ...(relaunch ? {} : { GEMINI_CLI_NO_RELAUNCH: 'true' }), ...env },
     stdio: ['pipe', 'pipe', 'pipe'],
     shell: useShell,
     windowsHide: true,

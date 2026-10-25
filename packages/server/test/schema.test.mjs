@@ -1,7 +1,7 @@
 // Contrôles du schéma : migration, contraintes, plein texte, journal en ajout seul, vues.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { copyFileSync, mkdtempSync, rmSync, writeFileSync, appendFileSync } from 'node:fs';
+import { copyFileSync, mkdtempSync, readFileSync, rmSync, writeFileSync, appendFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { openJournal, migrate, MIGRATIONS_DIR } from '../src/journal.mjs';
@@ -45,6 +45,13 @@ test('migration : fichier WAL, version 1, empreinte vérifiée, pas de double ap
     db.close();
     db = openJournal(path); // deuxième ouverture : rien à appliquer
     assert.equal(db.prepare('SELECT count(*) n FROM schema_migration').get().n, 1);
+
+    // Une copie aux fins de ligne Windows (CRLF) reste la même migration
+    const crlf = mkdtempSync(join(tmpdir(), 'gb-mig-'));
+    const lf = readFileSync(join(MIGRATIONS_DIR, '001_init.sql'), 'utf8').replace(/\r\n/g, '\n');
+    writeFileSync(join(crlf, '001_init.sql'), lf.replace(/\n/g, '\r\n'));
+    assert.deepEqual(migrate(db, crlf), []);
+    rmSync(crlf, { recursive: true, force: true });
 
     // Une migration modifiée après application est refusée
     const altered = mkdtempSync(join(tmpdir(), 'gb-mig-'));

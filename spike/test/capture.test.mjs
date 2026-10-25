@@ -41,7 +41,7 @@ test('parcours complet : fichiers, contrôles S3, reprise S2, masquage', () => {
     // Masquage : ni le dossier de travail ni le dossier personnel n'apparaissent
     const all = ['S1', 'S2', 'S3', 'S4'].flatMap((s) => readdirSync(join(dir, s)).map((f) => read(dir, s, f)))
       .concat(read(dir, 'rapport.md'), read(dir, 'environnement.json')).join('\n');
-    assert.ok(all.includes('<WORKSPACE>/notes.md'));
+    assert.match(all, /<WORKSPACE>(\/|\\\\)notes\.md/); // barre inverse échappée dans le JSON sous Windows
     assert.ok(!all.includes(homedir()));
     assert.ok(!/geminiboard-spike-\w{6}/.test(all));
 
@@ -66,14 +66,16 @@ test('authentification absente : arrêt au premier tour, code 3, rapport écrit'
   }
 });
 
-test('délai dépassé : tour annulé, code 130, spike poursuivi', () => {
+test('délai dépassé : tour annulé (code 130 hors Windows), spike poursuivi', () => {
   const { r, out, dir } = capture(['--only', 'S4', '--timeout', '1'], { FAKE_GEMINI_HANG: '1' });
   try {
     assert.equal(r.status, 0, r.stderr);
     for (const t of ['T1', 'T2', 'T3']) {
       const m = meta(dir, 'S4', t);
       assert.equal(m.exit.timedOut, true);
-      assert.equal(m.exit.code, 130);
+      assert.equal(m.exit.meaning, 'annulation');
+      // Sous Windows, taskkill /F ne donne pas le code 130 : c'est l'arrêt demandé qui fait foi
+      if (process.platform !== 'win32') assert.equal(m.exit.code, 130);
     }
   } finally {
     rmSync(out, { recursive: true, force: true });

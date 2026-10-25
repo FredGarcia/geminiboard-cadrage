@@ -31,6 +31,8 @@ export function openJournal(dbPath, { migrationsDir = MIGRATIONS_DIR, readonly =
 /**
  * Applique, dans l'ordre, les fichiers NNN_nom.sql pas encore appliqués, chacun dans une transaction.
  * Refuse de continuer si une migration déjà appliquée a changé depuis (empreinte sha256).
+ * L'empreinte ignore les fins de ligne : un dépôt extrait sous Windows (CRLF) et le même dépôt
+ * extrait sous WSL2 (LF) donnent la même empreinte.
  */
 export function migrate(db, migrationsDir = MIGRATIONS_DIR) {
   const files = readdirSync(migrationsDir).filter((f) => /^\d{3}_[\w-]+\.sql$/.test(f)).sort();
@@ -41,7 +43,7 @@ export function migrate(db, migrationsDir = MIGRATIONS_DIR) {
   const done = [];
   for (const file of files) {
     const version = Number(file.slice(0, 3));
-    const sql = readFileSync(join(migrationsDir, file), 'utf8');
+    const sql = readFileSync(join(migrationsDir, file), 'utf8').replace(/\r\n/g, '\n');
     const checksum = createHash('sha256').update(sql).digest('hex');
     if (applied.has(version)) {
       if (applied.get(version) !== checksum) {

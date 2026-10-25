@@ -51,6 +51,7 @@ test('tour suivant : --resume, mode, politique, --skip-trust', async () => {
 test('mémoire : relance de Gemini CLI désactivée par défaut, plafond de tas transmis à node', async () => {
   const { r } = await turn({ prompt: 'x', sessionId: uuidv7(), resume: false, maxHeapMb: 512 });
   assert.ok(r.stderr.includes('relance=non'), r.stderr);
+  assert.ok(r.stderr.includes('navigateur=non'), r.stderr);
   assert.ok(r.stderr.includes('--max-old-space-size=512'), r.stderr);
   const { r: r2 } = await turn({ prompt: 'x', sessionId: uuidv7(), resume: false, relaunch: true });
   assert.ok(r2.stderr.includes('relance=oui'), r2.stderr);
@@ -81,6 +82,18 @@ test('point d\'entrée relatif : lu depuis le dossier du board, pas depuis celui
   assert.equal(r.code, 0, r.stderr);
 });
 
+test('connexion Google sans identifiants en cache : code 41, sans question sur stdin (NO_BROWSER)', async () => {
+  const { events, r } = await turn({ prompt: 'Bonjour', sessionId: uuidv7(), resume: false, env: { FAKE_GEMINI_LOGIN: '1' } });
+  assert.equal(r.code, 41);
+  assert.equal(r.meaning, 'authentification');
+  assert.deepEqual(events, []);
+  // Sans NO_BROWSER, Gemini CLI aurait demandé l'accord d'ouvrir le navigateur et pris le prompt pour la réponse
+  const { events: e2, r: r2 } = await turn({ prompt: 'Bonjour', sessionId: uuidv7(), resume: false,
+    env: { FAKE_GEMINI_LOGIN: '1', NO_BROWSER: '' } });
+  assert.equal(r2.code, 42);
+  assert.match(e2[0]?.line ?? '', /Do you want to continue/);
+});
+
 test('codes de sortie 42 et 55', async () => {
   assert.equal((await turn({ prompt: 'FAIL42', sessionId: uuidv7(), resume: false })).r.meaning, 'entrée invalide');
   const { r } = await turn({ prompt: 'FAIL55', sessionId: uuidv7(), resume: false });
@@ -88,9 +101,9 @@ test('codes de sortie 42 et 55', async () => {
   assert.equal(r.meaning, EXIT_CODES[55]);
 });
 
-test('erreur d\'API : code 144 sans signification, result en erreur', async () => {
+test('erreur d\'API : statut HTTP en code de sortie (144, ou 400 sous Windows), result en erreur', async () => {
   const { events, r } = await turn({ prompt: 'APIERR', sessionId: uuidv7(), resume: false });
-  assert.equal(r.code, 144);
+  assert.equal(r.code, process.platform === 'win32' ? 400 : 144);
   assert.equal(r.meaning, null);
   assert.deepEqual(events.map((e) => e.type), ['init', 'message', 'result']);
   assert.equal(events.at(-1).status, 'error');
@@ -105,9 +118,10 @@ test('annulation en cours de tour : sens « annulation »', async () => {
   if (process.platform !== 'win32') assert.equal(r.code, 130);
 });
 
-test('binaire introuvable : ENOENT', async () => {
+test('binaire introuvable : ENOENT (sous Windows, le mode bin passe par cmd.exe, qui sort en erreur)', async () => {
   const h = runGemini({ prompt: 'x', sessionId: uuidv7(), resume: false, cwd: process.cwd(), bin: './absent', onEvent: () => {} });
-  await assert.rejects(h.done, { code: 'ENOENT' });
+  if (process.platform === 'win32') assert.notEqual((await h.done).code, 0);
+  else await assert.rejects(h.done, { code: 'ENOENT' });
 });
 
 test('paramètres refusés avant tout lancement', () => {

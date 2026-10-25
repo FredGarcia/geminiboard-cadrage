@@ -10,7 +10,8 @@
     "node": ">=20"
   },
   "scripts": {
-    "test": "node --test packages/server/test/run-gemini.test.mjs packages/server/test/schema.test.mjs packages/server/test/projector.test.mjs packages/server/test/corpus.test.mjs spike/test/capture.test.mjs",
+    "test": "node tools/run-tests.mjs",
+    "test:ci": "node tools/run-tests.mjs --test-reporter=spec --test-reporter-destination=stdout --test-reporter=./tools/ci-annotations.mjs --test-reporter-destination=stdout",
     "spike": "node spike/capture.mjs"
   }
 }

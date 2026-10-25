@@ -5,10 +5,12 @@
 //   FAIL42, FAIL55        sortie 42 ou 55
 //   « Crée le fichier X »  écrit X si le mode d'approbation l'autorise (auto_edit, yolo)
 //   « commande shell »     outil shell accepté en yolo ou avec --policy, refusé sinon
-//   APIERR                erreur d'API : result en erreur, sortie 144 (statut HTTP 400 modulo 256)
+//   APIERR                erreur d'API : result en erreur, sortie 400 sous Windows, 144 ailleurs (400 modulo 256)
 //   FAKE_GEMINI_APIERR=1  même erreur d'API quel que soit le prompt
 //   FAKE_GEMINI_EXIT=41   échec d'authentification avant tout événement
 //   FAKE_GEMINI_HANG=1    attend l'arrêt quel que soit le prompt
+//   FAKE_GEMINI_LOGIN=1   connexion Google sans identifiants en cache, comme Gemini CLI 0.65 : code 41
+//                         avec NO_BROWSER ; sinon, demande d'accord sur stdout, prompt pris pour la réponse, code 42
 import { readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
@@ -30,14 +32,24 @@ if (process.env.FAKE_GEMINI_EXIT === '41') {
   process.exit(41);
 }
 
+if (process.env.FAKE_GEMINI_LOGIN === '1') {
+  if (process.env.NO_BROWSER) {
+    process.stderr.write('Manual authorization is required but the current session is non-interactive.\n');
+    process.exit(41);
+  }
+  process.stdout.write('\nOpening authentication page in your browser. Do you want to continue? [Y/n]: ');
+  process.stderr.write('Authentication cancelled by user.\nNo input provided via stdin.\n');
+  process.exit(42);
+}
+
 process.stderr.write(`fake args=${JSON.stringify(args)} relance=${process.env.GEMINI_CLI_NO_RELAUNCH === 'true' ? 'non' : 'oui'}`
-  + ` execArgv=${JSON.stringify(process.execArgv)}\n`);
+  + ` navigateur=${process.env.NO_BROWSER ? 'non' : 'oui'} execArgv=${JSON.stringify(process.execArgv)}\n`);
 out({ type: 'init', timestamp: ts(), session_id: sessionId, model: 'fake-model' });
 out({ type: 'message', timestamp: ts(), role: 'user', content: prompt });
 
 if (prompt.includes('APIERR') || process.env.FAKE_GEMINI_APIERR === '1') {
   out({ type: 'result', timestamp: ts(), status: 'error', error: { type: 'unknown', message: '[API Error: 400 Bad Request]' } });
-  process.exit(144);
+  process.exit(process.platform === 'win32' ? 400 : 144); // comme Gemini CLI : code de sortie 32 bits sous Windows
 } else if (prompt.includes('LONG') || process.env.FAKE_GEMINI_HANG === '1') {
   process.on('SIGINT', () => process.exit(130));
   setTimeout(() => {}, 60000);

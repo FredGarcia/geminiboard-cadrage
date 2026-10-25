@@ -1,6 +1,6 @@
 # GeminiBoard : cadrage
 
-> **Statut** : v0.2 ratifiée le 25 octobre 2026 (PR #2) · étape 1 : spike fusionné (PR #3), corpus à collecter · étape 2 : migration, journal et projecteur fusionnés (PR #4), mémoire et Windows natif (PR #5), ajustement au corpus réel à venir
+> **Statut** : v0.2 ratifiée le 25 octobre 2026 (PR #2) · étape 1 : spike fusionné (PR #3), corpus à collecter · étape 2 : migration, journal et projecteur fusionnés (PR #4), mémoire et Windows natif (PR #5), Windows ou WSL2 au choix et CI (PR #6), ajustement au corpus réel à venir
 >
 > **Portée de ce dépôt** : le cadrage, le code du board (D11) et les composants portables (D12).
 
@@ -14,6 +14,7 @@ GeminiBoard est une interface locale, au style de celle de Claude, qui pilote Ge
 - Gemini CLI se prête mal à la conception de skills et d'agents complexes : ils sont conçus avec Claude, publiés sur GitHub, puis installés dans Gemini CLI.
 - Il manque une vue d'ensemble : les sessions sont rangées par projet dans `~/.gemini/tmp/` (30 jours de rétention par défaut), les composants sont dispersés entre dossier utilisateur, espaces de travail et extensions, et les décisions (autorisations, ratifications) ne laissent aucune trace exploitable.
 - Gemini CLI publie une version par semaine (v0.65.0 le 20 octobre 2026). Le board conserve donc les événements bruts et versionne ses analyseurs, pour encaisser les changements de format.
+- Depuis le 18 juin 2026, Gemini CLI ne sert plus les comptes grand public (gratuit, Google AI Pro et Ultra) : il reste accessible avec une licence Gemini Code Assist Standard ou Enterprise, ou avec une clé d'API payante. Google oriente les autres vers Antigravity CLI (`agy`). Le board hérite de cette condition (§5.5).
 
 GeminiBoard comble ce manque et prépare la transition : son journal devient la mémoire commune quand le travail se fera directement avec Claude.
 
@@ -33,6 +34,7 @@ GeminiBoard comble ce manque et prépare la transition : son journal devient la 
 | D10 | Toutes les bibliothèques sont compatibles avec Node.js 20 (Q2) | 2026-10-25 |
 | D11 | Le code du board vit dans ce dépôt (Q5) | 2026-10-25 |
 | D12 | Les composants portables vivent aussi dans ce dépôt (Q6) | 2026-10-25 |
+| D13 | Le board tourne au choix sous Windows natif ou sous WSL2 (Q14) | 2026-10-25 |
 
 Le front visé (flux en continu, panneaux, catalogue) est complexe : ce cadrage retient donc Angular au titre de D3. D10 limite Angular aux versions 20 et 21 (Q3).
 
@@ -95,7 +97,7 @@ flowchart LR
 - **Écrivain unique.** Seul `board-server` écrit dans la base, sur le modèle de l'agent médiateur d'Agent2Dev. Le relais de hooks lui transmettra ses événements ; le serveur MCP lit en lecture seule.
 - **Journal d'abord.** Tout ce qui arrive (ligne JSONL, entrée de hook, action dans l'interface) est écrit tel quel dans `event`, puis projeté dans les tables métier. Un arrêt brutal ne perd rien : le rejeu reconstitue les messages à partir de leurs fragments.
 - **Adaptateurs de moteur.** Un adaptateur par moteur et par canal : `gemini-cli` en headless pour la v1, puis ACP et `claude-code` à l'étape 8. Le reste du board ignore le moteur, ce qui prépare le passage à Claude.
-- **Local.** Tout tourne sur le poste, sous Windows natif ou sous WSL2 (§5.4, Q14) ; le navigateur accède au board par `localhost`.
+- **Local.** Tout tourne sur le poste, sous Windows natif ou sous WSL2 au choix (D13, §5.4) ; le navigateur accède au board par `localhost`.
 
 ### 5.2 Composants et versions
 
@@ -162,10 +164,12 @@ Mesures du 25 octobre 2026, sous Linux avec Node.js 20.20.2 et Gemini CLI 0.65.0
 | Board, tas plafonné à 512 Mo (`maxHeapMb`) | 273 à 275 Mo | — |
 | `board-server` (esquisse du §6.3, faux Gemini CLI) | 78 Mo au repos, 81 Mo après 20 tours | — |
 
+Sous Windows (GitHub Actions, Windows Server, même lancement que le board, trois exécutions) : 192 à 222 Mo par tour, pour le processus seul (`tasklist`), et 2,3 à 3,9 s par tour.
+
 - Gemini CLI n'occupe de mémoire que pendant un tour : un processus par prompt (D9), qui se termine avec le tour. Au repos ne restent que `board-server` et l'onglet du navigateur.
 - Par défaut, Gemini CLI se relance dans un second processus pour s'attribuer un tas égal à 50 % de la RAM (en interactif, aussi pour redémarrer après un changement d'authentification). En headless, le board désactive cette relance : un processus Node.js de moins (environ 180 Mo) et plus d'une seconde gagnée par tour. `relaunch: true` la rétablit ; `maxHeapMb` plafonne le tas.
 
-WSL2 ou Windows natif (Q14) :
+WSL2 ou Windows natif, au choix (D13) :
 
 | | WSL2 | Windows natif |
 |---|---|---|
@@ -175,17 +179,44 @@ WSL2 ou Windows natif (Q14) :
 | Commandes shell lancées par Gemini CLI | bash | PowerShell : `pwsh.exe` s'il est installé, sinon `powershell.exe` |
 | Installation | Node.js 20 et Gemini CLI dans la distribution | Node.js 20 et Gemini CLI pour Windows |
 
-Le code supporte les deux plateformes :
+Le code et ses tests tournent sur les deux plateformes :
 
 - **Lancement** : `node` et le `gemini.js` du paquet, trouvé par `npm root -g` ou par `GEMINI_CLI_ENTRY` ; ni `gemini.cmd`, ni `cmd.exe`, ni shell.
 - **Arrêt** : sous Windows, Node.js ne sait pas envoyer `SIGINT` (`kill()` y tue le processus net, sans ses descendants) ; le board utilise `taskkill /T /F`, qui arrête Gemini CLI et ses commandes. Le code de sortie n'y vaut pas 130 : le board journalise l'arrêt demandé (`turn.cancel`), qui fait foi pour le projecteur (§7.4).
 - **Chemins** : reconnus à leur forme (`C:\…`, `\\serveur\…`), quel que soit le système, et comparés sans tenir compte de la casse ; un artefact garde un chemin relatif au projet, avec des `/`.
 - **Spike** : masquage des formes Windows des chemins (barres inverses ou obliques, échappement JSON, noms courts comme `JEANDU~1`, casse), du nom d'utilisateur et du dossier d'installation de Gemini CLI ; mémoire mesurée par `tasklist`.
+- **Fins de ligne** : `.gitattributes` impose LF, y compris dans un dépôt extrait sous Windows ; l'empreinte des migrations ignore CRLF.
 - **Tests** : le faux Gemini CLI est lancé comme `gemini.js`, sans shell ; seul le test du raccourci `gemini` (mode `bin`) est sauté sous Windows.
+- **CI** (GitHub Actions, à chaque push) : la suite de tests sous Ubuntu et sous Windows, avec Node.js 20 et 22, et un contrôle que better-sqlite3 s'installe sans compilation (`.github/workflows/tests.yml`) ; le vrai Gemini CLI, lancé par le spike avec une clé invalide sous Ubuntu et sous Windows, chaque lundi et à chaque changement du lanceur ou du spike (`.github/workflows/gemini-cli.yml`).
 
 Conséquence pour les skills (étape 3) : leurs scripts s'écrivent en Node.js, qui tourne à l'identique sous bash et sous PowerShell, plutôt qu'en bash.
 
-Non vérifié sur un vrai poste Windows : le spike le dira (S4, §12).
+Reste à vérifier sur le poste, avec un vrai compte : le spike le dira (S4, §12).
+
+### 5.5 Installation et connexion de Gemini CLI
+
+Le board n'a ni compte, ni clé, ni certification à lui : il lance le Gemini CLI de l'environnement où il tourne, avec la connexion de celui-ci. Seul Gemini CLI parle aux services de Google ; le board n'écoute que sur `127.0.0.1`.
+
+| Étape | Windows natif (PowerShell) | WSL2 (bash) |
+|---|---|---|
+| Node.js 20 | installeur Windows de Node.js | nvm, ou paquet de la distribution |
+| Gemini CLI | `npm install -g @google/gemini-cli` | la même commande, dans la distribution |
+| Connexion de Gemini CLI | une fois, dans un terminal (tableau suivant) | la même chose, dans la distribution : la connexion faite sous Windows n'y sert pas |
+| Board | `git clone`, `npm install`, `npm test` | les mêmes commandes |
+| Base | `%USERPROFILE%\.geminiboard\geminiboard.db` | `~/.geminiboard/geminiboard.db` |
+
+Chaque environnement a sa configuration Gemini CLI (`.gemini` : réglages, connexion, sessions) et sa base (`.geminiboard`). Une même base ne s'ouvre pas depuis les deux : le mode WAL de SQLite ne fonctionne pas sur un système de fichiers réseau, ce qu'est `/mnt/c` vu de WSL2.
+
+Connexion de Gemini CLI, depuis le 18 juin 2026 (§1) :
+
+| Accès | Mise en place |
+|---|---|
+| Licence Gemini Code Assist Standard ou Enterprise (compte d'entreprise) | lancer `gemini` une fois dans un terminal et se connecter avec le compte Google de l'entreprise ; définir `GOOGLE_CLOUD_PROJECT`, exigé pour ces comptes. Les identifiants restent en cache dans `.gemini/oauth_creds.json`, et le mode headless les réutilise |
+| Clé d'API Gemini payante | `GEMINI_API_KEY`, dans l'environnement qui lance le board ou dans `.gemini/.env` |
+| Compte grand public (gratuit, Google AI Pro ou Ultra) | plus servi par Gemini CLI : ni Gemini CLI ni le board ne répondent |
+
+- Sans connexion valable, Gemini CLI sort avec le code 41, que le board affiche. Le board passe `NO_BROWSER=true` : sans cela, sur un poste qui a un navigateur (Windows notamment), un Gemini CLI non connecté demande sur son entrée standard l'accord d'ouvrir la page de connexion et prend le prompt pour la réponse (sortie 42, ou attente de la connexion si la première ligne du prompt est vide ou vaut « y »). Constaté sur Gemini CLI 0.65.0.
+- Réseau d'entreprise : le proxy (`HTTPS_PROXY`) et son certificat racine (`NODE_EXTRA_CA_CERTS`, fichier PEM) se définissent dans l'environnement qui lance le board ; Gemini CLI en hérite.
 
 ## 6. Capturer la sortie de Gemini CLI
 
@@ -232,11 +263,12 @@ Corrections apportées à l'exemple proposé, vérifiées sur Gemini CLI 0.65.0 
 ### 6.2 Contraintes du mode headless (Gemini CLI 0.65.0)
 
 - **Autorisations.** Personne ne peut confirmer un outil en cours de tour : le moteur de politiques transforme toute demande de confirmation en refus. Le mode d'approbation se choisit donc avant l'envoi : `default` (les outils à confirmer, comme l'écriture de fichiers ou le shell, sont refusés), `auto_edit` (modifications de fichiers acceptées), `yolo` (tout est accepté), `plan` (lecture seule). Des règles de politique (`policies/*.toml`) peuvent autoriser des commandes précises.
+- **Authentification.** Le mode headless réutilise la connexion en cache ou la clé d'API ; il ne sait pas se connecter seul. Le board passe `NO_BROWSER=true`, pour qu'un Gemini CLI non connecté sorte avec le code 41 au lieu de lire le prompt comme une réponse (§5.5).
 - **Dossier approuvé.** Dans un dossier non approuvé, le mode headless s'arrête avec le code 55. Le board ne passe `--skip-trust` que pour un projet dont l'humain a approuvé le dossier (`project.trusted`), et journalise cette décision.
 - **Création de la session.** Gemini CLI n'enregistre une session qu'après un tour abouti. Si le premier tour échoue (erreur d'API, par exemple), `--resume` sort ensuite avec le code 42 (« No previous sessions found for this project »). Le board ne reprend donc une session qu'après un `result` en succès ; sinon, il la recrée avec `--session-id`.
 - **Relance.** Par défaut, Gemini CLI se relance dans un second processus Node.js avec un tas de 50 % de la RAM. En headless, cette relance ne sert qu'à agrandir le tas : le board la désactive (`GEMINI_CLI_NO_RELAUNCH`, §5.4).
 - **Shell.** Les commandes de `run_shell_command` passent par bash sous Linux et WSL2, par PowerShell sous Windows (`pwsh.exe`, sinon `powershell.exe`). Une règle de politique (`commandPrefix`) vise la commande telle que le modèle l'écrit : `ls` fonctionne dans les deux cas (alias de `Get-ChildItem` dans PowerShell) ; `grep`, absent de Windows par défaut, non.
-- **Codes de sortie.** 0 (succès), 1 (erreur générale), 41 (authentification), 42 (entrée invalide), 52 (configuration), 53 (limite de tours), 55 (dossier non approuvé), 130 (annulation). Une erreur d'API sort avec le statut HTTP modulo 256 (400 donne 144) : seul l'événement `result` fait foi.
+- **Codes de sortie.** 0 (succès), 1 (erreur générale), 41 (authentification), 42 (entrée invalide), 52 (configuration), 53 (limite de tours), 55 (dossier non approuvé), 130 (annulation). Une erreur d'API sort avec le statut HTTP : 400 sous Windows, où les codes de sortie tiennent sur 32 bits, et 144 ailleurs (400 modulo 256). Seul l'événement `result` fait foi.
 - **Événements.** Tous portent `type` et `timestamp` ; champs propres à chaque type, relevés dans le code source (`packages/core/src/output/types.ts`) :
 
 | Type | Champs |
@@ -256,9 +288,10 @@ Le texte saisi suit ce chemin : interface, WebSocket, `board-server`, puis entr�
 
 Vérifications du 25 octobre 2026 :
 
-- Lanceur et spike : 19 tests contre un faux Gemini CLI lancé comme `gemini.js` (sans shell), sous Node.js 20.20.2 et 22.23 (ordre des événements, ligne JSON coupée en deux écritures, prompt piégé transmis intact, `--session-id` puis `--resume`, politiques, relance désactivée et plafond du tas, codes 42, 55, 130 et 144, binaire absent, point d'entrée relatif, paramètres refusés, masquage des chemins sous leurs formes Windows, mesure de la mémoire).
+- Lanceur et spike : 20 tests contre un faux Gemini CLI lancé comme `gemini.js` (sans shell), sous Linux et sous Windows, avec Node.js 20 et 22 (ordre des événements, ligne JSON coupée en deux écritures, prompt piégé transmis intact, `--session-id` puis `--resume`, politiques, relance désactivée et plafond du tas, connexion absente sans question sur stdin, codes 41, 42, 55, 130 et 144, binaire absent, point d'entrée relatif, paramètres refusés, masquage des chemins sous leurs formes Windows, mesure de la mémoire).
 - Esquisse de serveur : 25 contrôles sous Node.js 20.20.2 (WebSocket de bout en bout, journal et projections, bouton Arrêter et onglet fermé consignés par `turn.cancel`, règle de reprise après un premier tour en erreur, reprise après un arrêt brutal, relance désactivée et plafond du tas).
 - Contre Gemini CLI 0.65.0 réel : sans authentification, sortie 41 ; dans un dossier non approuvé, sortie 55 ; avec `--skip-trust` et une clé invalide, `init` (avec l'UUIDv7 fourni par le board), `message` (prompt intact), `result` en erreur, sortie 144 ; le tour suivant en `--resume` sort avec 42. Lancé comme le board (`node` et `gemini.js`, sans relance) : 267 à 283 Mo par tour.
+- En CI (GitHub Actions), le spike contre Gemini CLI 0.65.0 réel avec une clé invalide : sous Ubuntu, sortie 144 et 230 à 262 Mo par tour ; sous Windows, sortie 400 et 192 à 222 Mo par tour (processus seul), sur trois exécutions ; ni chemin local ni nom d'utilisateur dans la sortie.
 
 <details>
 <summary><strong><code>server.mjs</code> (esquisse) : cliquer pour déplier</strong></summary>
@@ -497,14 +530,14 @@ Règles appliquées par `projector.mjs` (version 2) :
 
 ### 7.5 Tests
 
-`npm install`, puis `npm test` (Node.js 20) : 41 tests, dont 40 passent et 1 attend un corpus réel.
+`npm install`, puis `npm test` (Node.js 20) : 42 tests, dont 41 passent et 1 attend un corpus réel ; sous Windows, 40 passent et 2 sont sautés (s'y ajoute le test du raccourci `gemini`).
 
 - Schéma (6) : migration et empreintes, lecture seule, contraintes, plein texte insensible aux accents, journal en ajout seul, vues.
 - Projecteur (13) : tour simple, outils et chronologie, `result` en erreur, fins sans `result`, tours successifs, artefacts et instantanés, composants, tour ouvert et reprise après arrêt, suppression, reconstruction à l'identique (O2), chemins POSIX et Windows, projet Windows trouvé sans tenir compte de la casse, arrêt demandé (`turn.cancel`).
 - Rejeu de corpus (3) : un corpus synthétique produit par le spike avec le faux Gemini CLI, le même converti en corpus Windows (plateforme `win32`, chemins à barres inverses), puis chaque dossier `fixtures/spike-*` présent dans le dépôt. Chaque tour est vérifié (statut, message utilisateur, appels d'outils, texte de la réponse), puis la base est reconstruite à l'identique.
-- Lanceur (12) et spike (7).
+- Lanceur (13) et spike (7).
 
-Vérifié le 25 octobre 2026 sous Node.js 20.20.2 (trois exécutions), et sous Node.js 22.23 après une installation propre : better-sqlite3 est un module natif, et changer de version de Node.js impose `npm rebuild`. Les corpus produits par Gemini CLI 0.65.0 réel sans compte valide (authentification absente, erreur d'API, reprise impossible) se rejouent aussi à l'identique.
+Vérifié le 25 octobre 2026 en local sous Node.js 20.20.2 (trois exécutions) et 22.23 après une installation propre, puis en CI sous Ubuntu et sous Windows avec Node.js 20 et 22 : better-sqlite3 est un module natif, et changer de version de Node.js impose `npm rebuild`. Les corpus produits par Gemini CLI 0.65.0 réel sans compte valide (authentification absente, erreur d'API, reprise impossible) se rejouent aussi à l'identique.
 
 ## 8. Lecture par Claude
 
@@ -627,6 +660,7 @@ Second ordre : les décisions de l'observateur (approbations, autorisations, rat
 - Écoute sur `127.0.0.1` uniquement ; le board n'envoie aucune donnée hors du poste.
 - Le prompt passe par stdin, jamais par une ligne de commande ni par un shell : pas d'injection, pas de prompt visible dans `ps`.
 - `--skip-trust` seulement pour un dossier approuvé par l'humain dans le board (`project.trusted`), décision journalisée.
+- Le board ne détient aucun identifiant : la connexion et les clés restent celles de Gemini CLI (`.gemini`, variables d'environnement), qu'il ne lit pas.
 - Relais de hooks authentifié par HMAC-SHA256 (secret local, droits 600).
 - Masquage avant écriture : motifs de secrets configurables (clés d'API, jetons, en-têtes `Authorization`) ; la colonne `event.redacted` trace leur application.
 - Politique de capture par projet : `full`, `metadata` (sans contenu) ou `off`.
@@ -641,7 +675,7 @@ Chaque étape se termine par une ratification en PR.
 | Étape | Livrable | Point de ratification |
 |---|---|---|
 | 0. Cadrage | ce README, décisions D1 à D12 | fusion de cette PR |
-| 1. Spike de capture | `spike/capture.mjs` fusionné (PR #3) ; reste à le lancer sur le poste avec un vrai compte et à committer le corpus dans `fixtures/` | corpus |
+| 1. Spike de capture | `spike/capture.mjs` fusionné (PR #3) ; reste à le lancer sur le poste avec un vrai compte (licence Gemini Code Assist Standard ou Enterprise, ou clé d'API payante, §5.5) et à committer le corpus dans `fixtures/` | corpus |
 | 2. Schéma v1 | `migrations/001_init.sql`, journal, projecteur et rejeu des fixtures (PR #4) ; mémoire et Windows natif (PR #5) ; reste l'ajustement au corpus réel | schéma v1 |
 | 3. Skill de construction | skill `geminiboard` et commandes TOML qui guident Gemini CLI dans la construction du board, dans ce dépôt | skill 1.0.0 |
 | 4. Serveur | `packages/server` : lanceur, journal, projecteur, API, WebSocket | une discussion de bout en bout |
@@ -678,7 +712,8 @@ Tests : le projecteur est vérifié en rejouant les fixtures du spike ; l'interf
 | Q11 | Mode d'approbation par défaut d'une nouvelle discussion | `default` ; `auto_edit` ou `yolo` sur choix explicite, journalisé |
 | Q12 | Passage à Node.js 22 | Node.js 20 n'a plus de correctifs depuis le 30 avril 2026 ; Node.js 22 ouvrirait Angular 22, better-sqlite3 13 et `claude-agent-acp` |
 | Q13 | Nom du dépôt | le renommer `geminiboard` maintenant qu'il porte le code (GitHub redirige l'ancienne adresse) |
-| Q14 | Plateforme du poste | Windows natif, pour ne pas garder une machine virtuelle allumée (le gain disparaît si Docker Desktop ou un équivalent l'utilise déjà) ; WSL2 reste possible, le code supporte les deux (§5.4) |
+| Q14 | Plateforme du poste | **Tranchée (D13)** : Windows natif ou WSL2, au choix ; le natif évite de garder une machine virtuelle allumée, sauf si Docker Desktop ou un équivalent l'utilise déjà (§5.4) |
+| Q15 | Moteur Antigravity CLI (`agy`) | à évaluer si l'accès d'entreprise à Gemini CLI venait à cesser ; un adaptateur de plus (§5.1), au même titre que `claude-code` |
 
 ## 14. Références
 
@@ -708,9 +743,14 @@ Consultées le 25 octobre 2026.
 
 - Compatibilités relevées dans le registre npm (`engines` de better-sqlite3, @angular/core, @google/gemini-cli, light-my-request et cookie) et dans les binaires précompilés publiés avec chaque version de better-sqlite3 · fin de support : [Node.js v20 goes EOL April 30](https://www.herodevs.com/blog-posts/node-js-v20-goes-eol-april-30----and-your-cloud-provider-is-pulling-the-plug-the-next-day)
 
+**Accès à Gemini CLI**
+
+- [An important update: Transitioning Gemini CLI to Antigravity CLI](https://developers.googleblog.com/en/an-important-update-transitioning-gemini-cli-to-antigravity-cli/) (Google, 19 mai 2026) · [Authentication](https://geminicli.com/docs/get-started/authentication/)
+- Code de Gemini CLI 0.65.0 (paquet npm) : `validateNonInteractiveAuth`, `initOauthClient`, `getConsentForOauth` (accord lu sur stdin en headless), `NO_BROWSER`
+
 **Windows et WSL2**
 
-- [Advanced settings configuration in WSL](https://learn.microsoft.com/en-us/windows/wsl/wsl-config) (`.wslconfig` : `memory`, `swap`, `vmIdleTimeout`, `autoMemoryReclaim`)
+- [Advanced settings configuration in WSL](https://learn.microsoft.com/en-us/windows/wsl/wsl-config) (`.wslconfig` : `memory`, `swap`, `vmIdleTimeout`, `autoMemoryReclaim`) · [Write-Ahead Logging](https://www.sqlite.org/wal.html) (WAL et systèmes de fichiers réseau)
 - Code de Gemini CLI 0.65.0 (paquet npm) : relance et `GEMINI_CLI_NO_RELAUNCH` dans `packages/cli/index.ts`, choix du shell sous Windows dans `getShellConfiguration`, lecture de stdin dans `readStdin`
 
 **Standard** : [Agent Skills](https://agentskills.io)

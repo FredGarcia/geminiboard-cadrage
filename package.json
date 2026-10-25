@@ -1,0 +1,13 @@
+{
+  "name": "geminiboard",
+  "private": true,
+  "description": "Interface locale au style de Claude pour piloter Gemini CLI, avec journal SQLite",
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "test": "node --test packages/server/test/run-gemini.test.mjs spike/test/capture.test.mjs",
+    "spike": "node spike/capture.mjs"
+  }
+}

@@ -6,7 +6,7 @@ Ce script lance Gemini CLI en mode headless sur des scénarios synthétiques et 
 
 - Node.js 20 ou plus, sous Linux, WSL2 ou Windows natif.
 - Gemini CLI installé : `npm install -g @google/gemini-cli` (version de référence : 0.65.0).
-- Gemini CLI authentifié : lancer `gemini` une fois en interactif pour se connecter, ou définir `GEMINI_API_KEY`.
+- Gemini CLI connecté, avec un accès qu'il sert encore : licence Gemini Code Assist Standard ou Enterprise (compte d'entreprise, avec `GOOGLE_CLOUD_PROJECT`), ou clé d'API payante (`GEMINI_API_KEY`). Depuis le 18 juin 2026, les comptes grand public (gratuit, Google AI Pro et Ultra) ne sont plus servis (README, §5.5). Pour un compte, lancer `gemini` une fois en interactif et se connecter.
 
 ## Lancement
 
@@ -66,6 +66,7 @@ La colonne Mémoire de chaque tableau donne le pic de mémoire résidente de Gem
 - Dossier non approuvé : sortie 55 (d'où `--skip-trust`).
 - Erreur d'API : `init`, `message` puis `result` en erreur ; sortie égale au statut HTTP modulo 256 (400 donne 144).
 - Après un premier tour en erreur, la session n'existe pas : `--resume` sort avec 42 (« No previous sessions found for this project »).
+- Connexion Google sans identifiants en cache : sortie 41, car le lanceur passe `NO_BROWSER=true`. Sans cela, sur un poste qui a un navigateur, Gemini CLI demande sur stdin s'il peut ouvrir la page de connexion, prend le prompt pour la réponse et sort avec 42.
 - Mémoire, sous Linux avec Node.js 20.20.2 : 267 à 283 Mo par tour avec la relance désactivée (défaut du spike), 461 à 465 Mo avec `--relaunch`.
 
 ## Codes de sortie du script
@@ -83,4 +84,4 @@ La colonne Mémoire de chaque tableau donne le pic de mémoire résidente de Gem
 
 ## Tests
 
-`npm test` à la racine du dépôt fait tourner le spike contre un faux Gemini CLI (`packages/server/test/fake-gemini.mjs`), sans réseau ni compte.
+`npm test` à la racine du dépôt fait tourner le spike contre un faux Gemini CLI (`packages/server/test/fake-gemini.mjs`), sans réseau ni compte. La CI (GitHub Actions) le fait sous Ubuntu et sous Windows ; elle lance aussi le scénario S4 contre le vrai Gemini CLI avec une clé invalide, puis vérifie les codes de sortie, la mesure de la mémoire et le masquage (`tools/ci-spike-check.mjs`).

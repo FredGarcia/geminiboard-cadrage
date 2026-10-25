@@ -1,6 +1,7 @@
 # Gemini CLI réel, lancé comme le board, sous Linux et sous Windows natif (D13), sans compte :
 # une clé d'API invalide suffit à vérifier le lancement (code 144), la mesure de la mémoire et le masquage
 # du spike. Chaque lundi, la dernière version de Gemini CLI est éprouvée (une version sort chaque semaine).
+# Chaque étape passe par tools/ci-run.mjs, qui publie la fin de la sortie en annotation si elle échoue.
 name: gemini-cli
 
 on:
@@ -8,6 +9,7 @@ on:
     paths:
       - packages/server/src/run-gemini.mjs
       - spike/**
+      - tools/ci-run.mjs
       - tools/ci-spike-check.mjs
       - .github/workflows/gemini-cli.yml
   schedule:
@@ -21,7 +23,7 @@ jobs:
   spike:
     name: Gemini CLI réel, ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 15
+    timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:
@@ -31,10 +33,10 @@ jobs:
       - uses: actions/setup-node@v7
         with:
           node-version: '20'
-      - run: npm ci
-      - run: npm install -g @google/gemini-cli@latest
+      - run: node tools/ci-run.mjs "npm ci" npm ci
+      - run: node tools/ci-run.mjs "Installation de Gemini CLI" npm install -g @google/gemini-cli@latest
       - name: Spike S4, clé d'API invalide
         env:
           GEMINI_API_KEY: cle-invalide-pour-la-ci
-        run: node spike/capture.mjs --only S4 --timeout 120 --out ci-spike
-      - run: node tools/ci-spike-check.mjs ci-spike
+        run: node tools/ci-run.mjs "Spike S4" node spike/capture.mjs --only S4 --timeout 120 --out ci-spike
+      - run: node tools/ci-run.mjs "Contrôle du spike" node tools/ci-spike-check.mjs ci-spike

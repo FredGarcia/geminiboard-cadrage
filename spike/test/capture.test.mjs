@@ -82,15 +82,16 @@ test('délai dépassé : tour annulé (code 130 hors Windows), spike poursuivi',
   }
 });
 
-test('erreur d\'API : code 144 lu à travers l\'événement result', () => {
+test('erreur d\'API : statut HTTP en code de sortie (144, ou 400 sous Windows), lu à travers result', () => {
   const { r, out, dir } = capture(['--only', 'S4'], { FAKE_GEMINI_APIERR: '1' });
   try {
     assert.equal(r.status, 0, r.stderr);
     const m = meta(dir, 'S4', 'T1');
-    assert.equal(m.exit.code, 144);
+    const code = process.platform === 'win32' ? 400 : 144;
+    assert.equal(m.exit.code, code);
     assert.deepEqual(m.exit.result, { status: 'error', error: '[API Error: 400 Bad Request]' });
     const report = read(dir, 'rapport.md');
-    assert.match(report, /\| T1 \| default \| 144 \(result : error\) \|/);
+    assert.match(report, new RegExp(`\\| T1 \\| default \\| ${code} \\(result : error\\) \\|`));
     assert.match(report, /Tours terminés par un `result` en erreur : S4 T1, S4 T2, S4 T3/);
   } finally {
     rmSync(out, { recursive: true, force: true });

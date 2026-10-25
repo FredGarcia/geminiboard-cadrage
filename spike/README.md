@@ -64,10 +64,10 @@ La colonne Mémoire de chaque tableau donne le pic de mémoire résidente de Gem
 
 - Sans authentification : sortie 41 avant tout événement ; le script s'arrête au premier tour (code 3).
 - Dossier non approuvé : sortie 55 (d'où `--skip-trust`).
-- Erreur d'API : `init`, `message` puis `result` en erreur ; sortie égale au statut HTTP modulo 256 (400 donne 144).
+- Erreur d'API : `init`, `message` puis `result` en erreur ; sortie égale au statut HTTP, soit 400 sous Windows et 144 ailleurs (400 modulo 256).
 - Après un premier tour en erreur, la session n'existe pas : `--resume` sort avec 42 (« No previous sessions found for this project »).
 - Connexion Google sans identifiants en cache : sortie 41, car le lanceur passe `NO_BROWSER=true`. Sans cela, sur un poste qui a un navigateur, Gemini CLI demande sur stdin s'il peut ouvrir la page de connexion, prend le prompt pour la réponse et sort avec 42.
-- Mémoire, sous Linux avec Node.js 20.20.2 : 267 à 283 Mo par tour avec la relance désactivée (défaut du spike), 461 à 465 Mo avec `--relaunch`.
+- Mémoire, sous Linux avec Node.js 20.20.2 : 267 à 283 Mo par tour avec la relance désactivée (défaut du spike), 461 à 465 Mo avec `--relaunch`. Sous Windows (CI, Windows Server) : 192 à 197 Mo par tour, processus seul.
 
 ## Codes de sortie du script
 

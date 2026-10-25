@@ -1,6 +1,7 @@
 // ci-spike-check.mjs : contrôle une sortie du spike produite en CI avec le vrai Gemini CLI et une clé
-// d'API invalide. Vérifie le lancement (code 144, result en erreur), la mesure de la mémoire et le
-// masquage, puis publie un bilan en annotations GitHub Actions. Usage : node tools/ci-spike-check.mjs <dossier>
+// d'API invalide. Vérifie le lancement (code de sortie 400 sous Windows, 144 ailleurs ; result en erreur),
+// la mesure de la mémoire et le masquage, puis publie un bilan en annotations GitHub Actions.
+// Usage : node tools/ci-spike-check.mjs <dossier>
 import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { homedir, userInfo } from 'node:os';
 import { join } from 'node:path';
@@ -14,11 +15,13 @@ const env = JSON.parse(readFileSync(join(dir, 'environnement.json'), 'utf8'));
 const metas = readdirSync(join(dir, 'S4')).filter((f) => f.endsWith('.meta.json'))
   .map((f) => JSON.parse(readFileSync(join(dir, 'S4', f), 'utf8')));
 
+// Code de sortie 32 bits sous Windows : le statut HTTP tel quel ; ailleurs, modulo 256
+const expected = String(env.platform).startsWith('win32') ? 400 : 144;
 const problems = [];
 if (metas.length !== 3) problems.push(`${metas.length} tours au lieu de 3`);
 for (const m of metas) {
-  if (m.exit.code !== 144 || m.exit.result?.status !== 'error') {
-    problems.push(`${m.turn} : code ${m.exit.code}, result ${m.exit.result?.status ?? 'absent'} (attendu : 144, error)`);
+  if (m.exit.code !== expected || m.exit.result?.status !== 'error') {
+    problems.push(`${m.turn} : code ${m.exit.code}, result ${m.exit.result?.status ?? 'absent'} (attendu : ${expected}, error)`);
   }
   if (!(m.memoryPeakMb > 50)) problems.push(`${m.turn} : mémoire non mesurée (${m.memoryPeakMb})`);
 }

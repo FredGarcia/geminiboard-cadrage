@@ -5,7 +5,7 @@
 //   FAIL42, FAIL55        sortie 42 ou 55
 //   « Crée le fichier X »  écrit X si le mode d'approbation l'autorise (auto_edit, yolo)
 //   « commande shell »     outil shell accepté en yolo ou avec --policy, refusé sinon
-//   APIERR                erreur d'API : result en erreur, sortie 144 (statut HTTP 400 modulo 256)
+//   APIERR                erreur d'API : result en erreur, sortie 400 sous Windows, 144 ailleurs (400 modulo 256)
 //   FAKE_GEMINI_APIERR=1  même erreur d'API quel que soit le prompt
 //   FAKE_GEMINI_EXIT=41   échec d'authentification avant tout événement
 //   FAKE_GEMINI_HANG=1    attend l'arrêt quel que soit le prompt
@@ -49,7 +49,7 @@ out({ type: 'message', timestamp: ts(), role: 'user', content: prompt });
 
 if (prompt.includes('APIERR') || process.env.FAKE_GEMINI_APIERR === '1') {
   out({ type: 'result', timestamp: ts(), status: 'error', error: { type: 'unknown', message: '[API Error: 400 Bad Request]' } });
-  process.exit(144);
+  process.exit(process.platform === 'win32' ? 400 : 144); // comme Gemini CLI : code de sortie 32 bits sous Windows
 } else if (prompt.includes('LONG') || process.env.FAKE_GEMINI_HANG === '1') {
   process.on('SIGINT', () => process.exit(130));
   setTimeout(() => {}, 60000);

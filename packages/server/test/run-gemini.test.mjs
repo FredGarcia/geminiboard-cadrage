@@ -101,9 +101,9 @@ test('codes de sortie 42 et 55', async () => {
   assert.equal(r.meaning, EXIT_CODES[55]);
 });
 
-test('erreur d\'API : code 144 sans signification, result en erreur', async () => {
+test('erreur d\'API : statut HTTP en code de sortie (144, ou 400 sous Windows), result en erreur', async () => {
   const { events, r } = await turn({ prompt: 'APIERR', sessionId: uuidv7(), resume: false });
-  assert.equal(r.code, 144);
+  assert.equal(r.code, process.platform === 'win32' ? 400 : 144);
   assert.equal(r.meaning, null);
   assert.deepEqual(events.map((e) => e.type), ['init', 'message', 'result']);
   assert.equal(events.at(-1).status, 'error');

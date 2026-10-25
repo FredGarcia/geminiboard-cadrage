@@ -7,8 +7,8 @@ import { createInterface } from 'node:readline';
 
 export const APPROVAL_MODES = ['default', 'auto_edit', 'yolo', 'plan'];
 
-// Codes de sortie de Gemini CLI 0.65. Une erreur d'API sort avec le statut HTTP modulo 256
-// (400 donne 144) : c'est l'événement `result` (status: 'error') qui fait foi.
+// Codes de sortie de Gemini CLI 0.65. Une erreur d'API sort avec le statut HTTP : 400 sous Windows,
+// 144 ailleurs (400 modulo 256). C'est l'événement `result` (status: 'error') qui fait foi.
 export const EXIT_CODES = {
   0: 'succès', 1: 'erreur générale', 41: 'authentification', 42: 'entrée invalide',
   52: 'configuration', 53: 'limite de tours', 55: 'dossier non approuvé', 130: 'annulation',

@@ -224,8 +224,17 @@ try {
   writeFileSync(join(outDir, 'environnement.json'), `${JSON.stringify(env, null, 2)}\n`);
   writeFileSync(join(outDir, 'rapport.md'), renderReport(env));
   if (opt['keep-workspace']) console.log(`Dossier de travail conservé : ${workspace}`);
-  // Reprises : sous Windows, un fichier peut rester verrouillé un instant (antivirus, indexation)
-  else rmSync(workspace, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
+  else removeQuietly(workspace);
+}
+
+// Sous Windows, le dossier peut rester verrouillé un moment après la fin du dernier tour (EBUSY constaté
+// en CI) : reprises avec une attente croissante, puis simple avertissement, le corpus étant déjà écrit
+function removeQuietly(dir) {
+  try {
+    rmSync(dir, { recursive: true, force: true, maxRetries: 8, retryDelay: 250 });
+  } catch (e) {
+    console.warn(`Dossier de travail non supprimé (${e.code ?? e.message}) : ${dir}`);
+  }
 }
 
 console.log(abort ? `Arrêt anticipé : ${abort}` : 'Spike terminé.');

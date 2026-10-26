@@ -1,0 +1,20 @@
+description = "Prépare la PR : contrôles, titre et description au format du dépôt, sans rien pousser"
+prompt = '''
+Active la skill `geminiboard` et lis `skills/geminiboard/references/redaction.md`.
+
+Contrôles rapides, lancés à l'instant (sans les tests) :
+
+!{node skills/geminiboard/scripts/verifier.mjs --sans-tests}
+
+État du dépôt et fichiers modifiés :
+
+!{node skills/geminiboard/scripts/etat.mjs --fichiers}
+
+Consignes de l'humain pour cette PR, s'il y en a : {{args}}
+
+1. Si un contrôle est KO, arrête-toi : liste ce qu'il faut corriger avant la PR.
+2. Vérifie que le README suit les changements : ligne de statut, sections touchées, ligne de l'étape dans la feuille de route (§12), nombres de tests (§7.5), nouvelles questions (§13).
+3. Rédige le titre et la description selon le modèle de `redaction.md` : objet, changements, points à ratifier, vérifications datées. Les nombres de tests viennent d'une exécution complète de `npm test` sous Node.js 20 ; si elle n'a pas eu lieu dans cette session, demande-la (commande /board:verifier) plutôt que d'inventer des nombres.
+4. Donne les commandes git à lancer, une par ligne, sans `&&` (Windows PowerShell 5.1 ne le connaît pas).
+5. Ne pousse rien et n'ouvre pas la PR sans l'accord explicite de l'humain.
+'''

@@ -1,0 +1,24 @@
+description = "Prépare une nouvelle migration SQLite sans toucher aux migrations appliquées (argument : objet)"
+prompt = '''
+Active la skill `geminiboard`, puis lis la section « Migrations figées » de `skills/geminiboard/references/invariants.md` et la section 7 du README (schéma).
+
+Objet de la migration : {{args}}
+
+Migrations présentes et prochain numéro :
+
+!{node skills/geminiboard/scripts/etat.mjs --migrations}
+
+1. Nom : `migrations/NNN_<objet>.sql`, avec le prochain numéro ci-dessus. Ne modifie aucune migration existante, même pour une faute de frappe : une migration présente sur main a pu être appliquée sur un poste.
+2. Si le README en donne déjà une esquisse (par exemple `002_catalogue.sql` au §9.6), pars de ce texte et signale tout écart.
+3. Contenu, dans le style de `migrations/001_init.sql` :
+   - tables STRICT ; JSON contrôlé par json_valid() ; horodatages en texte ISO 8601 UTC à la milliseconde ; booléens en entiers 0 ou 1 ;
+   - clés UUIDv7 en texte pour les entités exposées, entiers pour les tables à fort volume ;
+   - commentaires en français ;
+   - jamais de suppression ni de réécriture du journal `event`, qui est en ajout seul.
+4. Conséquences à prévoir dans la même PR :
+   - règles du projecteur (`packages/server/src/projector.mjs`), et PROJECTOR_VERSION incrémentée si les projections changent ;
+   - vues `v_*` : c'est le contrat de lecture de Claude, toute modification s'accompagne d'une note dans le README ;
+   - tests (`packages/server/test/schema.test.mjs`, `packages/server/test/projector.test.mjs`) ;
+   - README, section 7 (tables, règles de projection, tests).
+5. Montre d'abord le SQL et le plan ; n'écris les fichiers qu'après l'accord explicite de l'humain.
+'''

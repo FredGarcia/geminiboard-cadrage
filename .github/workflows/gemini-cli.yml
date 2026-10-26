@@ -1,6 +1,7 @@
 # Gemini CLI réel, lancé comme le board, sous Linux et sous Windows natif (D13), sans compte :
-# une clé d'API invalide suffit à vérifier le lancement (code 144), la mesure de la mémoire et le masquage
-# du spike. Chaque lundi, la dernière version de Gemini CLI est éprouvée (une version sort chaque semaine).
+# une clé d'API invalide suffit à vérifier le lancement (code 144, ou 400 sous Windows), la mesure de la
+# mémoire et le masquage du spike ; le spike S5 vérifie l'activation par extension de projet (catalogue).
+# Chaque lundi, la dernière version de Gemini CLI est éprouvée (une version sort chaque semaine).
 # Chaque étape passe par tools/ci-run.mjs, qui publie la fin de la sortie en annotation si elle échoue.
 name: gemini-cli
 
@@ -40,3 +41,4 @@ jobs:
           GEMINI_API_KEY: cle-invalide-pour-la-ci
         run: node tools/ci-run.mjs "Spike S4" node spike/capture.mjs --only S4 --timeout 120 --out ci-spike
       - run: node tools/ci-run.mjs "Contrôle du spike" node tools/ci-spike-check.mjs ci-spike
+      - run: node tools/ci-run.mjs "Spike S5 (catalogue)" node spike/catalogue.mjs

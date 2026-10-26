@@ -85,3 +85,18 @@ La colonne Mémoire de chaque tableau donne le pic de mémoire résidente de Gem
 ## Tests
 
 `npm test` à la racine du dépôt fait tourner le spike contre un faux Gemini CLI (`packages/server/test/fake-gemini.mjs`), sans réseau ni compte. La CI (GitHub Actions) le fait sous Ubuntu et sous Windows ; elle lance aussi le scénario S4 contre le vrai Gemini CLI avec une clé invalide, puis vérifie les codes de sortie, la mesure de la mémoire et le masquage (`tools/ci-spike-check.mjs`).
+
+## Spike S5 : activation par extension de projet
+
+`spike/catalogue.mjs` vérifie le mécanisme d'activation du catalogue (README, §9.4) sur le vrai Gemini CLI, sans compte ni requête au modèle :
+
+```bash
+node spike/catalogue.mjs            # --entry <chemin de gemini.js> pour une autre installation, --keep pour garder les fichiers
+```
+
+1. Crée un `GEMINI_CLI_HOME` temporaire : la configuration de l'utilisateur n'est pas touchée.
+2. Génère l'extension d'un projet A : une skill, un sous-agent, une commande, une politique (un refus, une autorisation), un serveur MCP, un outil masqué et un fichier de contexte.
+3. La valide (`gemini extensions validate`), la lie (`gemini extensions link`, accord donné sur stdin), la désactive depuis la racine de chaque lecteur, puis l'active depuis le dossier du projet A.
+4. Regarde, depuis le projet A, un projet B et un dossier du dossier personnel, si l'extension est active et si la skill est visible (`gemini extensions list`, `gemini skills list`).
+
+Attendu : active avec sa skill dans le projet A seulement ; règle d'autorisation de l'extension ignorée ; serveur MCP et outil masqué pris en compte. Code de sortie 0 si tout est conforme, 1 sinon, 2 si Gemini CLI est introuvable. Constaté avec Gemini CLI 0.65.0 sous Linux et sous Windows ; la CI le refait chaque lundi avec la dernière version.

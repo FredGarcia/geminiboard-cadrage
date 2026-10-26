@@ -1,6 +1,6 @@
 # GeminiBoard : cadrage
 
-> **Statut** : v0.2 ratifiée le 25 octobre 2026 (PR #2) · étape 1 : spike fusionné (PR #3), corpus à collecter · étape 2 : migration, journal et projecteur fusionnés (PR #4), mémoire et Windows natif (PR #5), Windows ou WSL2 au choix et CI (PR #6), ajustement au corpus réel à venir
+> **Statut** : v0.2 ratifiée le 25 octobre 2026 (PR #2) · étape 1 : spike fusionné (PR #3), corpus à collecter · étape 2 : migration, journal et projecteur fusionnés (PR #4), mémoire et Windows natif (PR #5), Windows ou WSL2 au choix et CI (PR #6), gestion des composants conçue (PR #7), ajustement au corpus réel à venir
 >
 > **Portée de ce dépôt** : le cadrage, le code du board (D11) et les composants portables (D12).
 
@@ -57,7 +57,7 @@ Hors périmètre de la v1 : réimplémenter l'agent (le board pilote Gemini CLI,
 | Discussions | créer, reprendre, rechercher, renommer, épingler, archiver, bifurquer ; affichage en continu ; interruption ; choix du modèle et du mode d'approbation (`default`, `auto_edit`, `yolo`, `plan`), fixé avant l'envoi |
 | Projets | dossier racine et son approbation par l'humain, dépôt, instructions injectées au début de chaque session (sans modifier les fichiers du dépôt), connaissances, composants activés, discussions, politique de capture |
 | Artefacts | détection des fichiers écrits par les outils (`write_file`, `replace`), épinglage d'un bloc de code, versions, différences entre versions, export |
-| Catalogue | skills, sous-agents, commandes, hooks, serveurs MCP et outils, extensions, fichiers de contexte, politiques : découverte sur disque, versions, statut (brouillon, proposé, ratifié, obsolète), lien vers la PR, activation par projet, usages, export vers Claude |
+| Catalogue | skills, sous-agents, commandes, outils et serveurs MCP, hooks, politiques, fichiers de contexte, extensions : inventaire sur disque (Gemini CLI et Claude Code), versions, statut (brouillon, proposé, ratifié, obsolète), lien vers la PR, adoption, activation par projet par une extension de projet, usages, export vers Claude (§9) |
 | Exécutions | lancer une commande ou un agent en lot, suivre le statut et le code de sortie |
 | Journal | événements bruts filtrables (source, type, session), rejeu, export |
 | Réglages | moteurs détectés et leurs versions, chemins, secret HMAC, motifs de masquage |
@@ -146,7 +146,7 @@ Stockage local :
 | Saisie | palette `/` (commandes et skills du catalogue), `@` (fichiers, sous-agents), pièces jointes, choix du modèle et du mode d'approbation | zone de saisie |
 | Panneau de droite | artefact ouvert (rendu, source, versions, diff, copie, téléchargement) ou fiche du projet | panneau d'artefacts |
 | Page projet | instructions, connaissances, discussions, composants activés, dossier et son approbation, dépôt | Projets |
-| Catalogue | listes par type ; fiche avec versions, statut, PR et usages ; activation ; export vers Claude | propre à GeminiBoard |
+| Catalogue | listes par type ; fiche avec versions, contrôles, statut, PR et usages ; activation par projet ; adoption ; export vers Claude (§9.6) | propre à GeminiBoard |
 | Journal | événements bruts, filtres, rejeu | propre à GeminiBoard |
 
 Accessibilité (O5) : navigation complète au clavier, gestion du focus entre panneaux et dialogues, annonce du flux par une région `aria-live="polite"` phrase par phrase (et non jeton par jeton), contrastes de niveau AA, thèmes clair et sombre, respect de `prefers-reduced-motion`, repères et titres de page.
@@ -187,7 +187,7 @@ Le code et ses tests tournent sur les deux plateformes :
 - **Spike** : masquage des formes Windows des chemins (barres inverses ou obliques, échappement JSON, noms courts comme `JEANDU~1`, casse), du nom d'utilisateur et du dossier d'installation de Gemini CLI ; mémoire mesurée par `tasklist`.
 - **Fins de ligne** : `.gitattributes` impose LF, y compris dans un dépôt extrait sous Windows ; l'empreinte des migrations ignore CRLF.
 - **Tests** : le faux Gemini CLI est lancé comme `gemini.js`, sans shell ; seul le test du raccourci `gemini` (mode `bin`) est sauté sous Windows.
-- **CI** (GitHub Actions, à chaque push) : la suite de tests sous Ubuntu et sous Windows, avec Node.js 20 et 22, et un contrôle que better-sqlite3 s'installe sans compilation (`.github/workflows/tests.yml`) ; le vrai Gemini CLI, lancé par le spike avec une clé invalide sous Ubuntu et sous Windows, chaque lundi et à chaque changement du lanceur ou du spike (`.github/workflows/gemini-cli.yml`).
+- **CI** (GitHub Actions, à chaque push) : la suite de tests sous Ubuntu et sous Windows, avec Node.js 20 et 22, et un contrôle que better-sqlite3 s'installe sans compilation (`.github/workflows/tests.yml`) ; le vrai Gemini CLI, lancé par le spike avec une clé invalide, puis le spike S5 du catalogue (§9.4), sous Ubuntu et sous Windows, chaque lundi et à chaque changement du lanceur ou du spike (`.github/workflows/gemini-cli.yml`).
 
 Conséquence pour les skills (étape 3) : leurs scripts s'écrivent en Node.js, qui tourne à l'identique sous bash et sous PowerShell, plutôt qu'en bash.
 
@@ -262,7 +262,7 @@ Corrections apportées à l'exemple proposé, vérifiées sur Gemini CLI 0.65.0 
 
 ### 6.2 Contraintes du mode headless (Gemini CLI 0.65.0)
 
-- **Autorisations.** Personne ne peut confirmer un outil en cours de tour : le moteur de politiques transforme toute demande de confirmation en refus. Le mode d'approbation se choisit donc avant l'envoi : `default` (les outils à confirmer, comme l'écriture de fichiers ou le shell, sont refusés), `auto_edit` (modifications de fichiers acceptées), `yolo` (tout est accepté), `plan` (lecture seule). Des règles de politique (`policies/*.toml`) peuvent autoriser des commandes précises.
+- **Autorisations.** Personne ne peut confirmer un outil en cours de tour : le moteur de politiques transforme toute demande de confirmation en refus. Le mode d'approbation se choisit donc avant l'envoi : `default` (les outils à confirmer, comme l'écriture de fichiers ou le shell, sont refusés), `auto_edit` (modifications de fichiers acceptées), `yolo` (tout est accepté), `plan` (lecture seule). Des règles de politique (`policies/*.toml`) peuvent autoriser des commandes précises ; `--policy` remplace le dossier `~/.gemini/policies` de l'utilisateur, que le lanceur repasse donc en premier (§9.1).
 - **Authentification.** Le mode headless réutilise la connexion en cache ou la clé d'API ; il ne sait pas se connecter seul. Le board passe `NO_BROWSER=true`, pour qu'un Gemini CLI non connecté sorte avec le code 41 au lieu de lire le prompt comme une réponse (§5.5).
 - **Dossier approuvé.** Dans un dossier non approuvé, le mode headless s'arrête avec le code 55. Le board ne passe `--skip-trust` que pour un projet dont l'humain a approuvé le dossier (`project.trusted`), et journalise cette décision.
 - **Création de la session.** Gemini CLI n'enregistre une session qu'après un tour abouti. Si le premier tour échoue (erreur d'API, par exemple), `--resume` sort ensuite avec le code 42 (« No previous sessions found for this project »). Le board ne reprend donc une session qu'après un `result` en succès ; sinon, il la recrée avec `--session-id`.
@@ -288,7 +288,7 @@ Le texte saisi suit ce chemin : interface, WebSocket, `board-server`, puis entr�
 
 Vérifications du 25 octobre 2026 :
 
-- Lanceur et spike : 20 tests contre un faux Gemini CLI lancé comme `gemini.js` (sans shell), sous Linux et sous Windows, avec Node.js 20 et 22 (ordre des événements, ligne JSON coupée en deux écritures, prompt piégé transmis intact, `--session-id` puis `--resume`, politiques, relance désactivée et plafond du tas, connexion absente sans question sur stdin, codes 41, 42, 55, 130 et 144, binaire absent, point d'entrée relatif, paramètres refusés, masquage des chemins sous leurs formes Windows, mesure de la mémoire).
+- Lanceur et spike : 21 tests contre un faux Gemini CLI lancé comme `gemini.js` (sans shell), sous Linux et sous Windows, avec Node.js 20 et 22 (ordre des événements, ligne JSON coupée en deux écritures, prompt piégé transmis intact, `--session-id` puis `--resume`, politiques, relance désactivée et plafond du tas, connexion absente sans question sur stdin, dossier des politiques de l'utilisateur conservé, codes 41, 42, 55, 130 et 144, binaire absent, point d'entrée relatif, paramètres refusés, masquage des chemins sous leurs formes Windows, mesure de la mémoire).
 - Esquisse de serveur : 25 contrôles sous Node.js 20.20.2 (WebSocket de bout en bout, journal et projections, bouton Arrêter et onglet fermé consignés par `turn.cancel`, règle de reprise après un premier tour en erreur, reprise après un arrêt brutal, relance désactivée et plafond du tas).
 - Contre Gemini CLI 0.65.0 réel : sans authentification, sortie 41 ; dans un dossier non approuvé, sortie 55 ; avec `--skip-trust` et une clé invalide, `init` (avec l'UUIDv7 fourni par le board), `message` (prompt intact), `result` en erreur, sortie 144 ; le tour suivant en `--resume` sort avec 42. Lancé comme le board (`node` et `gemini.js`, sans relance) : 267 à 283 Mo par tour.
 - En CI (GitHub Actions), le spike contre Gemini CLI 0.65.0 réel avec une clé invalide : sous Ubuntu, sortie 144 et 230 à 262 Mo par tour ; sous Windows, sortie 400 et 192 à 222 Mo par tour (processus seul), sur trois exécutions ; ni chemin local ni nom d'utilisateur dans la sortie.
@@ -403,7 +403,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
 
 | Canal | Étape | Usage |
 |---|---|---|
-| Hooks (`~/.gemini/settings.json` → `geminiboard-hook`) | 6 | sessions lancées à la main dans un terminal (O1) : `SessionStart`, `BeforeAgent`, `BeforeTool`, `AfterTool`, `AfterAgent`, `SessionEnd` |
+| Hooks (`hooks/hooks.json` des extensions de projet → `geminiboard-hook`) | 6 | sessions lancées à la main dans un terminal (O1) : `SessionStart`, `BeforeAgent`, `BeforeTool`, `AfterTool`, `AfterAgent`, `SessionEnd` |
 | Import de `~/.gemini/tmp/<project_hash>/chats/` | 6 | rattrapage de l'historique ; format non documenté |
 | ACP (`gemini --acp`) | 8 | autorisations en cours de tour ; même protocole pour Claude Code avec `claude-agent-acp`, qui exige Node.js 22 |
 
@@ -435,7 +435,7 @@ Le relais de hooks obéira à trois règles :
 }
 ```
 
-La même entrée sera déclarée pour `SessionStart`, `BeforeAgent`, `AfterTool`, `AfterAgent`, `SessionEnd`, `Notification` et `PreCompress`.
+La même entrée sera déclarée pour `SessionStart`, `BeforeAgent`, `AfterTool`, `AfterAgent`, `SessionEnd`, `Notification` et `PreCompress`. Plutôt que dans `~/.gemini/settings.json`, elle ira dans le `hooks/hooks.json` de chaque extension de projet (§9.4), au même format : les réglages de l'utilisateur restent intacts.
 
 ## 7. Schéma SQLite
 
@@ -530,12 +530,12 @@ Règles appliquées par `projector.mjs` (version 2) :
 
 ### 7.5 Tests
 
-`npm install`, puis `npm test` (Node.js 20) : 42 tests, dont 41 passent et 1 attend un corpus réel ; sous Windows, 40 passent et 2 sont sautés (s'y ajoute le test du raccourci `gemini`).
+`npm install`, puis `npm test` (Node.js 20) : 43 tests, dont 42 passent et 1 attend un corpus réel ; sous Windows, 41 passent et 2 sont sautés (s'y ajoute le test du raccourci `gemini`).
 
 - Schéma (6) : migration et empreintes, lecture seule, contraintes, plein texte insensible aux accents, journal en ajout seul, vues.
 - Projecteur (13) : tour simple, outils et chronologie, `result` en erreur, fins sans `result`, tours successifs, artefacts et instantanés, composants, tour ouvert et reprise après arrêt, suppression, reconstruction à l'identique (O2), chemins POSIX et Windows, projet Windows trouvé sans tenir compte de la casse, arrêt demandé (`turn.cancel`).
 - Rejeu de corpus (3) : un corpus synthétique produit par le spike avec le faux Gemini CLI, le même converti en corpus Windows (plateforme `win32`, chemins à barres inverses), puis chaque dossier `fixtures/spike-*` présent dans le dépôt. Chaque tour est vérifié (statut, message utilisateur, appels d'outils, texte de la réponse), puis la base est reconstruite à l'identique.
-- Lanceur (13) et spike (7).
+- Lanceur (14) et spike (7).
 
 Vérifié le 25 octobre 2026 en local sous Node.js 20.20.2 (trois exécutions) et 22.23 après une installation propre, puis en CI sous Ubuntu et sous Windows avec Node.js 20 et 22 : better-sqlite3 est un module natif, et changer de version de Node.js impose `npm rebuild`. Les corpus produits par Gemini CLI 0.65.0 réel sans compte valide (authentification absente, erreur d'API, reprise impossible) se rejouent aussi à l'identique.
 
@@ -558,7 +558,153 @@ Deux voies, au choix selon le contexte.
 
 Un skill portable, `geminiboard-journal`, indique aux deux moteurs quand et comment interroger le journal. Le contrat de lecture repose sur les vues `v_*` : toute modification passe par une migration et une note de version.
 
-## 9. Portabilité Gemini CLI ↔ Claude Code
+## 9. Composants : gestion et portabilité
+
+Le catalogue (§4) gère tout ce qui oriente la conduite de Gemini CLI en dehors du prompt : skills, sous-agents, commandes, outils intégrés et serveurs MCP, hooks, politiques, fichiers de contexte, extensions. Il les inventorie, les versionne, les fait ratifier, les active projet par projet, suit leurs usages et prépare leur passage à Claude Code. Les composants de référence vivent dans ce dépôt (D12).
+
+### 9.1 Ce que Gemini CLI 0.65 charge
+
+Relevé dans le code de Gemini CLI 0.65.0 et vérifié sur des installations de démonstration, sous Linux et sous Windows, les 25 et 26 octobre 2026. Les emplacements sont donnés dans l'ordre où Gemini CLI les charge ; pour les skills, le dernier chargé l'emporte en cas de nom identique.
+
+| Type | Emplacements | Activation et désactivation | Usage observé |
+|---|---|---|---|
+| Skill | intégrés (`skill-creator`, `antigravity-support`) ; extensions ; `~/.gemini/skills`, `~/.agents/skills` ; `.gemini/skills`, `.agents/skills` du projet, si le dossier est approuvé | `skills.disabled` ; `gemini skills enable`, et `disable` en portée utilisateur ou espace de travail ; `install`, `link`, `uninstall` | outil `activate_skill` (`name`) ; aussi en commande : `/nom`, ou toujours `/<extension>:nom` pour une skill d'extension |
+| Sous-agent | intégrés ; `.gemini/agents/*.md` du projet, si le dossier est approuvé **et** l'agent reconnu (empreinte du fichier dans `~/.gemini/acknowledgments/agents.json`) ; `~/.gemini/agents/*.md` ; `agents/` des extensions | `experimental.enableAgents` (vrai par défaut) ; `agents.overrides.<nom>.enabled` ; frontmatter strict : `kind`, `name`, `description`, `display_name`, `tools`, `mcp_servers`, `model`, `temperature`, `max_turns`, `timeout_mins`, toute autre clé est refusée | outil `invoke_agent` (`agent_name`) |
+| Commande | `~/.gemini/commands`, `.gemini/commands` du projet, `commands/` des extensions ; s'y ajoutent les prompts des serveurs MCP et les skills | pas de désactivation unitaire ; en cas de conflit, Gemini CLI renomme selon l'origine (`<extension>:`, `user.`, `workspace.`, `<serveur MCP>.`) | `/ns:nom` en tête du prompt (`turn.command_name`) |
+| Serveur MCP et ses outils | `mcpServers` des réglages de l'utilisateur et du projet ; `mcpServers` du manifeste d'une extension | `mcp.allowed`, `mcp.excluded` ; `~/.gemini/mcp-server-enablement.json` (`gemini mcp enable`, `disable`) ; `--allowed-mcp-server-names`, qui remplace `mcp.allowed` pour l'exécution ; valeurs `$VAR`, `${VAR}` et `${VAR:-défaut}` résolues depuis l'environnement | outils `mcp_<serveur>_<outil>`, coupés au premier `_` : un nom de serveur sans `_` |
+| Outil intégré | registre de Gemini CLI : `read_file`, `read_many_files`, `list_directory`, `glob`, `grep_search`, `write_file`, `replace`, `run_shell_command`, `web_fetch`, `google_web_search`, `write_todos`, `update_topic`, `activate_skill`, `invoke_agent`, `ask_user`, `enter_plan_mode`, `exit_plan_mode`… | politiques ; `tools.core` (liste blanche), `tools.exclude` ; `excludeTools` du manifeste d'une extension | `tool_use` et `tool_result` ; un refus par politique arrive en `tool_result` en erreur |
+| Politique | règles par défaut de Gemini CLI ; `policies/` des extensions ; `~/.gemini/policies/*.toml` ; politiques système ; `--policy` par exécution | champs `toolName`, `mcpName`, `subagent`, `commandPrefix`, `commandRegex`, `argsPattern`, `modes`, `decision` (`allow`, `deny`, `ask_user`), `priority` | refus en `tool_result` |
+| Hook | `hooks` des réglages ; `hooks/hooks.json` d'une extension | `hooksConfig.enabled`, `hooksConfig.disabled` ; hooks du projet seulement si le dossier est approuvé | relais de hooks (étape 6) |
+| Fichier de contexte | `~/.gemini/GEMINI.md` ; `GEMINI.md` du projet et de ses dossiers ; noms réglés par `context.fileName` ; `contextFileName` d'une extension | toujours lu | — |
+| Extension | `~/.gemini/extensions/<nom>`, installée (`gemini extensions install`) ou liée (`link`) | règles par chemin dans `~/.gemini/extensions/extension-enablement.json` (`gemini extensions enable`, `disable`) ; `-e` par exécution, `-e none` pour aucune | à travers ses composants |
+| Réglages | `~/.gemini/settings.json` ; `.gemini/settings.json` du projet ; réglages système et d'administration (`admin.*`) | lecture seule pour le board | — |
+
+Il n'y a pas d'outil `save_memory` en 0.65 : la mémoire passe par l'édition des fichiers `GEMINI.md` et d'un index `MEMORY.md` propre au projet. Les listes de désactivation (`skills.disabled`, `extensions.disabled`, `hooksConfig.disabled`, `tools.exclude`) se cumulent entre portées : une portée peut ajouter une désactivation, pas en retirer une.
+
+Constats qui pèsent sur la conception :
+
+- **Politiques.** Niveaux, du plus fort au plus faible : administration, utilisateur, espace de travail, extension, défaut. `--policy` remplace le dossier `~/.gemini/policies`, qui n'est alors plus chargé : le lanceur le repasse donc en premier ; les deux ont le niveau utilisateur. Gemini CLI ignore les règles `allow` d'une extension, ainsi que ses règles pour le mode `yolo` : une extension ne peut que refuser ou faire demander, et ses règles cèdent devant celles de l'utilisateur. `--admin-policy` est ignoré quand des politiques système existent, ce qui protège le poste d'entreprise.
+- **Commandes en headless.** Une commande TOML qui contient `!{…}` s'arrête en headless, sauf si une politique autorise la commande shell qu'elle lance : la confirmation est impossible.
+- **Réglages système.** Un fichier de réglages système (`GEMINI_CLI_SYSTEM_SETTINGS_PATH`, `GEMINI_CLI_SYSTEM_DEFAULTS_PATH`) doit appartenir à root, ou aux administrateurs sous Windows, et n'être modifiable par personne d'autre : Gemini CLI ignore tout autre fichier. Le board ne peut donc pas s'en servir comme calque.
+- **Outils de Gemini CLI.** `gemini extensions list -o json` donne les extensions avec leurs skills, leurs sous-agents et leur état d'activation pour le dossier courant (`isActive`), tels que Gemini CLI les voit ; en 0.65, ce JSON sort sur stderr. `gemini skills list` n'a qu'une sortie texte. `gemini mcp list` démarre les serveurs pour tester leur connexion.
+
+### 9.2 Inventaire
+
+- **Sources.** Ce dépôt, pour les composants de référence (D12), puis d'autres dépôts GitHub, Agent2Prompt par exemple ; le disque, aux emplacements du §9.1, pour Gemini CLI et pour Claude Code (`~/.claude`, `.claude`), en lecture seule (Q20) ; `gemini extensions list -o json`, pour les extensions.
+- **Sans effet de bord.** Le scan lit les fichiers sans rien lancer : pas de `gemini mcp list`.
+- **Journalisé.** Un événement `catalog.scan` (board, interne) donne, par composant, le type, le nom, la portée, le chemin et l'empreinte sha256 de l'arborescence ; les contenus vont dans `blobs/`. Le projecteur en tire `component` et `component_version` : le catalogue se reconstruit comme le reste (O2).
+- **Version.** La semver déclarée (manifeste d'extension, `version` du frontmatter) quand elle existe, sinon les 12 premiers caractères de l'empreinte.
+- **Agents de projet.** Le scan calcule l'empreinte de chaque fichier et la compare à `acknowledgments/agents.json` : un agent non reconnu est signalé.
+- **Dérive.** La CI hebdomadaire comparera l'inventaire du board à `gemini skills list` et à `gemini extensions list -o json`, sur une installation de démonstration.
+
+### 9.3 Cycle de vie
+
+Calqué sur le cycle proposer, ratifier, appliquer :
+
+| Statut | Signification | Action journalisée |
+|---|---|---|
+| `draft` | composant édité dans le board ou dans ce dépôt, sur une branche | `component.edit` |
+| `proposed` | contrôles passés, PR ouverte sur ce dépôt (`pr_url`) | `component.propose` |
+| `ratified` | PR fusionnée ; la version porte le commit de fusion (`git_ref`) | `component.ratify` |
+| `deprecated` | retiré des activations, conservé dans l'historique | `component.deprecate` |
+
+Contrôles avant la proposition, journalisés (`component.check`) et gardés avec la version :
+
+| Type | Contrôles |
+|---|---|
+| Skill | `name` et `description` dans le frontmatter, et rien d'autre pour rester portable (§9.7) ; nom égal au dossier ; fichiers cités présents |
+| Sous-agent | clés du frontmatter strict de Gemini CLI seulement (§9.1) ; outils connus ; variantes Gemini et Claude générées depuis la source neutre |
+| Commande | TOML valide ; `prompt` présent ; `{{args}}`, `!{…}` et `@{…}` bien formés ; commande shell de `!{…}` couverte par une politique |
+| Politique | TOML valide ; règles complètes ; aucune règle `allow` destinée à une extension |
+| Serveur MCP | nom sans `_` ; aucun secret en clair (motifs de masquage, §11) |
+| Extension de projet | `gemini extensions validate` |
+
+Un composant trouvé hors du dépôt (installé à la main) peut être adopté : il est copié dans ce dépôt, puis suit le même cycle (`component.adopt`). Proposé (Q19) : seules les versions ratifiées s'activent dans un projet ; un brouillon s'essaie dans un projet de bac à sable.
+
+### 9.4 Activation par projet : l'extension de projet (Q17)
+
+Pour chaque projet, le board génère une extension Gemini CLI, `gb-<projet>`, à partir du catalogue :
+
+```text
+~/.geminiboard/extensions/gb-<projet>/
+├── gemini-extension.json    nom, version, contextFileName, serveurs MCP activés, outils masqués (excludeTools)
+├── GEMINI.md                instructions du projet (§4), injectées sans toucher au dépôt
+├── skills/<nom>/            version épinglée de chaque skill activée
+├── agents/<nom>.md          sous-agents activés
+├── commands/<ns>/<nom>.toml commandes activées
+├── hooks/hooks.json         hooks activés (dont le relais du board, étape 6)
+└── policies/<nom>.toml      règles de refus et de demande propres au projet
+```
+
+- **Liée une fois.** `gemini extensions link` n'écrit qu'une métadonnée vers ce dossier (`.gemini-extension-install.json`) : ni copie, ni lien symbolique, donc aucun droit particulier sous Windows. Chaque génération se voit aussitôt. Gemini CLI demande un accord sur stdin ; le board le donne après la ratification humaine, et le journalise.
+- **Active sous la racine du projet seulement.** Le board désactive l'extension depuis la racine de chaque lecteur (`gemini extensions disable --scope workspace`), puis l'active depuis la racine du projet (`enable --scope workspace`) : règles `["!/*", "<racine>/*"]` dans `extension-enablement.json`, écrites par les commandes publiques de Gemini CLI (Q18). La portée `user` ne suffirait pas : elle ne couvre que le dossier personnel, et un projet situé ailleurs (`D:\dev`, `/opt`) verrait l'extension active.
+- **Mêmes composants à la main.** Une session lancée dans un terminal, dans le dossier du projet, voit les composants du board (O1). Le board ajoute `-e` à ses propres exécutions, pour n'y charger que les extensions prévues.
+- **Autorisations.** L'extension ne peut pas autoriser (§9.1) : les autorisations du projet passent par `--policy` à chaque exécution du board, avec le mode d'approbation. Une restriction qui doit tenir dans les exécutions du board y figure aussi, puisque les règles de l'extension cèdent devant celles de niveau utilisateur. Une session lancée à la main demandera donc confirmation, ce qui est voulu.
+- **Versions épinglées réelles.** L'extension contient la version épinglée, même si le dépôt avance. Un sous-agent d'extension n'a pas à être reconnu. Chaque composant s'active seul. `gemini extensions validate` contrôle l'extension générée.
+- **Entre deux tours.** Le board ne régénère jamais l'extension pendant un tour du projet ; chaque génération est journalisée (`extension.materialize`, avec l'empreinte de l'arborescence).
+- **Composants hors board** (`~/.gemini/skills`, réglages de l'utilisateur…) : inventoriés, suivis à l'usage, toujours actifs. Le board ne les modifie pas ; il propose de les adopter. Il n'écrit pas non plus dans le `.gemini/` du dépôt d'un projet.
+- **Agents du dépôt du projet** (`.gemini/agents`) : non reconnus, Gemini CLI ne les charge pas en headless. Le board le signale et propose de les reconnaître dans un terminal, ou de les adopter dans l'extension du projet après relecture (décision journalisée).
+- **Noms d'appel.** Le board applique les règles de préfixe de Gemini CLI (§9.1) et signale les conflits avant d'activer.
+- **Serveurs MCP.** `--allowed-mcp-server-names` remplaçant `mcp.allowed`, le board n'y passe que des serveurs déjà permis par ce réglage. Leurs secrets ne vont jamais dans la base : le manifeste porte des références `$VAR`, résolues dans l'environnement qui lance Gemini CLI.
+
+Sans le board, le dépôt reste installable en entier comme extension (§9.7) : tout y est alors actif partout.
+
+Vérifié par le spike S5 (`spike/catalogue.mjs`), sans compte, dans un `GEMINI_CLI_HOME` temporaire : une extension de projet générée (skill, sous-agent, commande, politique, serveur MCP, outil masqué, fichier de contexte) est validée, liée, désactivée depuis la racine puis activée pour le seul dossier du projet. Depuis ce dossier, la skill est visible ; depuis un autre projet ou depuis le dossier personnel, elle ne l'est pas ; la règle `allow` de l'extension est ignorée. Contrôlé sous Linux et sous Windows, à chaque changement du spike et chaque lundi (CI).
+
+Voies écartées :
+
+| Voie | Pourquoi l'écarter |
+|---|---|
+| `.gemini/settings.json` du projet | écrit dans le dépôt |
+| calque de réglages système | refusé par Gemini CLI, faute d'appartenir à root (§9.1), et il remplacerait celui de l'administrateur |
+| `GEMINI_CLI_HOME` propre à chaque projet | déplace aussi la connexion, les sessions et l'historique |
+| options par exécution seules (`-e`, `--policy`) | sans effet sur les sessions lancées à la main |
+| politiques seules, en refusant `activate_skill` ou `invoke_agent` pour un nom | le modèle voit encore les skills et sous-agents refusés, et perd des tours à les essayer |
+
+### 9.5 Usages
+
+- L'événement `prompt` porte la liste des composants actifs du tour (type, nom, empreinte) : chaque usage se rattache à la version réellement employée, y compris après une reconstruction.
+- Règles de projection prévues : `activate_skill` donne `activated` ; `invoke_agent`, `delegated` ; `mcp_<serveur>_<outil>`, `invoked` sur le serveur MCP (nature d'outil `mcp`, déjà prévue par le schéma) ; un prompt `/ns:nom`, `invoked` sur la commande ; un outil refusé par une politique, `blocked` ; un hook, `fired` (étape 6).
+- Vues : composants inutilisés, usages par projet et par version.
+
+### 9.6 Interface et schéma
+
+- **Page Catalogue.** Listes par type ; filtres par portée, source, projet, statut et moteur ; fiche avec versions, différences entre versions, contrôles, statut, PR, projets où le composant est actif, usages ; alertes : contrôle en échec, agent non reconnu, extension de projet qui a dérivé. Actions : activer ou désactiver dans un projet, épingler une version, adopter, proposer, ratifier, rendre obsolète, exporter vers Claude.
+- **Page du projet, onglet Composants.** Vue effective (ce que Gemini CLI chargera dans le dossier du projet), bascules d'activation, versions épinglées, bouton Appliquer qui régénère l'extension et en montre la différence.
+- **Schéma.** Migration `002_catalogue.sql`, à l'étape 6 ; essayée sur le schéma 001, elle passe :
+
+```sql
+CREATE TABLE catalog_source (                          -- sources du catalogue : dépôts GitHub ou dossiers
+  id         TEXT PRIMARY KEY,                         -- UUIDv7
+  kind       TEXT NOT NULL CHECK (kind IN ('github','local')),
+  location   TEXT NOT NULL UNIQUE,                     -- 'FredGarcia/geminiboard-cadrage' ou chemin
+  ref        TEXT,                                     -- branche, tag ou commit suivi
+  synced_at  TEXT
+) STRICT;
+ALTER TABLE component ADD COLUMN engine_id TEXT REFERENCES engine(id);   -- moteur de l'instance ; NULL : référence
+ALTER TABLE component ADD COLUMN source_id TEXT REFERENCES catalog_source(id);
+ALTER TABLE component ADD COLUMN origin_id TEXT REFERENCES component(id) ON DELETE SET NULL;  -- composant de référence
+DROP INDEX ux_component_identity;
+CREATE UNIQUE INDEX ux_component_identity
+  ON component(ifnull(engine_id, ''), kind, scope, ifnull(project_id, ''), ifnull(parent_id, ''), name);
+ALTER TABLE component_version ADD COLUMN checks_json TEXT
+  CHECK (checks_json IS NULL OR json_valid(checks_json));               -- contrôles (§9.3)
+ALTER TABLE project_component ADD COLUMN applied_version_id INTEGER
+  REFERENCES component_version(id);                                      -- version présente dans l'extension
+CREATE TABLE project_extension (                       -- extension générée pour un projet et un moteur
+  project_id    TEXT NOT NULL REFERENCES project(id) ON DELETE CASCADE,
+  engine_id     TEXT NOT NULL REFERENCES engine(id),
+  name          TEXT NOT NULL UNIQUE,                  -- 'gb-<projet>'
+  path          TEXT NOT NULL,
+  sha256        TEXT NOT NULL,                         -- empreinte de l'arborescence générée
+  generated_at  TEXT NOT NULL,
+  PRIMARY KEY (project_id, engine_id)
+) STRICT;
+```
+
+S'y ajoutera une vue de comparaison entre le catalogue et le disque (à jour, modifié, absent).
+
+### 9.7 Portabilité Gemini CLI ↔ Claude Code
 
 État au 25 octobre 2026 (sources en fin de document) :
 
@@ -566,7 +712,7 @@ Un skill portable, `geminiboard-journal`, indique aux deux moteurs quand et comm
 |---|---|---|---|
 | Skill | `SKILL.md` (standard Agent Skills) dans `.gemini/skills/` ou son alias `.agents/skills/`, dans `~/.gemini/skills/` ou dans une extension ; activé par l'outil `activate_skill` ; `gemini skills install <url git>` | `SKILL.md` (même standard) dans `.claude/skills/`, `~/.claude/skills/` ou un plugin | **Source unique** ; frontmatter limité à `name` et `description` ; dossiers `scripts/`, `references/`, `assets/` |
 | Commande | TOML dans `.gemini/commands/<ns>/<nom>.toml`, appelée par `/ns:nom` ; champs `prompt` et `description` ; `{{args}}`, `!{…}`, `@{…}` | Markdown dans `.claude/commands/`, ou skill ; `description`, `argument-hint` ; `$ARGUMENTS`, ``!`…` ``, `@fichier` | **Source TOML** (D1) ; variante Claude générée |
-| Sous-agent | `.gemini/agents/<nom>.md`, frontmatter `name`, `description`, `tools`, `mcp_servers`, `model`, `temperature`, `max_turns`, `timeout_mins` ; réglage `experimental.enableAgents` | `.claude/agents/<nom>.md`, frontmatter `name`, `description`, `tools`, `model`… | source neutre ; deux variantes générées (correspondance des outils ci-dessous) |
+| Sous-agent | `.gemini/agents/<nom>.md`, frontmatter `name`, `description`, `tools`, `mcp_servers`, `model`, `temperature`, `max_turns`, `timeout_mins` ; actifs par défaut (`experimental.enableAgents`) ; un agent de projet doit être reconnu (§9.1) | `.claude/agents/<nom>.md`, frontmatter `name`, `description`, `tools`, `model`… | source neutre ; deux variantes générées (correspondance des outils ci-dessous) |
 | Hooks | `settings.json` ou `hooks/hooks.json` d'une extension ; stdin avec `session_id`, `transcript_path`, `cwd`, `hook_event_name`, `timestamp` ; code 2 pour bloquer ; `timeout` en millisecondes | `settings.json` ou `hooks/hooks.json` d'un plugin ; stdin avec `session_id`, `transcript_path`, `cwd`, `hook_event_name`, `permission_mode` ; code 2 pour bloquer ; `timeout` en secondes | un seul script Node ; correspondance des événements ci-dessous ; délais convertis |
 | Contexte | `GEMINI.md` ; `context.fileName` accepte `AGENTS.md` ; `contextFileName` dans une extension ; imports `@fichier.md` | `CLAUDE.md`, ou `AGENTS.md` lu nativement en l'absence de `CLAUDE.md` (v2.1.277 et suivantes) ; imports `@chemin` | **`AGENTS.md` comme source unique** |
 | Distribution par GitHub | extension : `gemini-extension.json` à la racine ; `gemini extensions install <url> [--ref] [--auto-update]` | plugin : `.claude-plugin/plugin.json`, publié par une marketplace (`.claude-plugin/marketplace.json`) | ce dépôt sert les deux (arborescence ci-dessous) |
@@ -678,9 +824,9 @@ Chaque étape se termine par une ratification en PR.
 | 1. Spike de capture | `spike/capture.mjs` fusionné (PR #3) ; reste à le lancer sur le poste avec un vrai compte (licence Gemini Code Assist Standard ou Enterprise, ou clé d'API payante, §5.5) et à committer le corpus dans `fixtures/` | corpus |
 | 2. Schéma v1 | `migrations/001_init.sql`, journal, projecteur et rejeu des fixtures (PR #4) ; mémoire et Windows natif (PR #5) ; reste l'ajustement au corpus réel | schéma v1 |
 | 3. Skill de construction | skill `geminiboard` et commandes TOML qui guident Gemini CLI dans la construction du board, dans ce dépôt | skill 1.0.0 |
-| 4. Serveur | `packages/server` : lanceur, journal, projecteur, API, WebSocket | une discussion de bout en bout |
-| 5. Interface | Angular : barre latérale, fil en continu, mode d'approbation, panneau d'artefacts | parcours au clavier et au lecteur d'écran |
-| 6. Catalogue et capture passive | découverte et versions des composants ; relais de hooks ; import des sessions | catalogue v1, O1 vérifié |
+| 4. Serveur | `packages/server` : lanceur, journal, projecteur, API, WebSocket ; inventaire du catalogue, en lecture (§9.2, Q16) | une discussion de bout en bout ; inventaire du poste |
+| 5. Interface | Angular : barre latérale, fil en continu, mode d'approbation, panneau d'artefacts ; page Catalogue en lecture (listes, fiches, usages) | parcours au clavier et au lecteur d'écran |
+| 6. Catalogue et capture passive | cycle de vie, contrôles et ratification, adoption, extension de projet (activation, épinglage, politiques), agents non reconnus signalés, migration `002_catalogue.sql` ; relais de hooks, livré dans les extensions de projet ; import des sessions | catalogue v1, O1 vérifié |
 | 7. Lecture par Claude | `geminiboard-mcp`, skill `geminiboard-journal`, export | O3 vérifié |
 | 8. Portabilité et ACP | `tools/port.mjs`, extension et plugin depuis ce dépôt ; ACP pour les autorisations en cours de tour et le moteur Claude (Node.js 22) | O4 vérifié |
 
@@ -690,6 +836,7 @@ Points à trancher par le spike, sur le poste et avec un vrai compte :
 - **S2.** Reprise `--resume <uuid>` sur plusieurs tours ; comportement si deux tours visent la même session.
 - **S3.** Effet réel des modes d'approbation et des règles `policies/*.toml` en headless.
 - **S4.** Délai de démarrage et mémoire d'un processus par prompt, sur le poste (Windows natif ou WSL2).
+- **S5.** Activation des composants par extension de projet (§9.4) : vérifiée le 26 octobre 2026 par `spike/catalogue.mjs`, sans compte, sous Linux et sous Windows (CI).
 
 Points repoussés : format des fichiers de session et déclenchement des hooks (étape 6), ACP et `claude-agent-acp` (étape 8).
 
@@ -714,6 +861,11 @@ Tests : le projecteur est vérifié en rejouant les fixtures du spike ; l'interf
 | Q13 | Nom du dépôt | le renommer `geminiboard` maintenant qu'il porte le code (GitHub redirige l'ancienne adresse) |
 | Q14 | Plateforme du poste | **Tranchée (D13)** : Windows natif ou WSL2, au choix ; le natif évite de garder une machine virtuelle allumée, sauf si Docker Desktop ou un équivalent l'utilise déjà (§5.4) |
 | Q15 | Moteur Antigravity CLI (`agy`) | à évaluer si l'accès d'entreprise à Gemini CLI venait à cesser ; un adaptateur de plus (§5.1), au même titre que `claude-code` |
+| Q16 | Place du catalogue dans la feuille de route | inventaire en lecture dès les étapes 4 (serveur) et 5 (interface) ; écriture, ratification et extension de projet à l'étape 6 (proposé) |
+| Q17 | Activation par projet | extension de projet générée par le board (§9.4), plutôt que des réglages d'espace de travail, qui modifieraient le dépôt, ou que des options par exécution seules, sans effet sur les sessions lancées à la main (proposé) |
+| Q18 | Fichiers internes de Gemini CLI (`extension-enablement.json`, `acknowledgments/agents.json`) | le board ne les écrit pas lui-même : l'activation passe par les commandes publiques `gemini extensions enable` et `disable`, vérifiées par le spike S5 ; un agent du dépôt se reconnaît dans un terminal, ou s'adopte dans l'extension du projet (proposé) |
+| Q19 | Versions activables dans un projet | ratifiées seulement ; un brouillon s'essaie dans un projet de bac à sable (proposé) |
+| Q20 | Inventaire de Claude Code | dès l'étape 4, en lecture seule, pour préparer la transition (proposé) |
 
 ## 14. Références
 
@@ -725,9 +877,9 @@ Consultées le 25 octobre 2026.
 - [Hooks](https://geminicli.com/docs/hooks/) · [Hooks reference](https://geminicli.com/docs/hooks/reference)
 - [Agent Skills](https://geminicli.com/docs/cli/skills/) · [Creating Agent Skills](https://geminicli.com/docs/cli/creating-skills/)
 - [Custom commands](https://www.geminicli.com/docs/cli/custom-commands) · [Session management](https://geminicli.com/docs/cli/session-management/)
-- [Extension reference](https://geminicli.com/docs/extensions/reference/) · [GEMINI.md](https://geminicli.com/docs/cli/gemini-md/) · [Tools reference](https://geminicli.com/docs/reference/tools)
+- [Extension reference](https://geminicli.com/docs/extensions/reference/) · [GEMINI.md](https://geminicli.com/docs/cli/gemini-md/) · [Tools reference](https://geminicli.com/docs/reference/tools) · [Policy engine](https://geminicli.com/docs/core/policy-engine)
 - [Subagents have arrived in Gemini CLI](https://developers.googleblog.com/en/subagents-have-arrived-in-gemini-cli/)
-- [Release v0.65.0](https://github.com/google-gemini/gemini-cli/releases/tag/v0.65.0) · code source : événements `stream-json` dans `packages/core/src/output/types.ts`, options `--acp` et `--experimental-acp` dans `packages/cli/src/config/config.ts`, champs des sous-agents dans `packages/core/src/agents/agentLoader.ts` ; aide (`gemini --help`), codes de sortie et politiques du paquet npm 0.65.0
+- [Release v0.65.0](https://github.com/google-gemini/gemini-cli/releases/tag/v0.65.0) · code source : événements `stream-json` dans `packages/core/src/output/types.ts`, options `--acp` et `--experimental-acp` dans `packages/cli/src/config/config.ts`, champs des sous-agents dans `packages/core/src/agents/agentLoader.ts` ; aide (`gemini --help`), codes de sortie et politiques du paquet npm 0.65.0 ; catalogue (§9.1) : `SkillManager.discoverSkills`, `AgentRegistry.loadAgents` et `AcknowledgedAgentsService`, `ExtensionEnablementManager`, `McpServerEnablementManager`, `SlashCommandResolver`, `loadExtensionPolicies`, `getPolicyDirectories`, vérifiés avec `gemini extensions link`, `extensions list -o json`, `skills list`, `skills disable`, `mcp add` sur une installation de démonstration
 
 **Agent Client Protocol**
 

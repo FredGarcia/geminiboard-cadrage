@@ -2,6 +2,7 @@
 // Node.js 20 ou plus, sans dépendance ; Linux, WSL2 et Windows natif.
 import { spawn, spawnSync } from 'node:child_process';
 import { existsSync, readFileSync } from 'node:fs';
+import { homedir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { createInterface } from 'node:readline';
 
@@ -16,6 +17,9 @@ export const EXIT_CODES = {
 
 const isWindows = process.platform === 'win32';
 const isScript = (path) => /\.[cm]?js$/i.test(path);
+
+/** Dossier des politiques de l'utilisateur, comme Gemini CLI le calcule (GEMINI_CLI_HOME remplace le dossier personnel). */
+export const userPoliciesDir = (env = process.env) => join(env.GEMINI_CLI_HOME || homedir(), '.gemini', 'policies');
 
 /**
  * Point d'entrée JavaScript de Gemini CLI installé globalement (bundle/gemini.js).
@@ -69,19 +73,26 @@ export function runGemini({ prompt, cwd, sessionId, resume, approvalMode = 'defa
   const useShell = !script && isWindows;
   const quote = (arg) => (useShell && /\s/.test(arg) ? `"${arg}"` : arg);
 
+  // GEMINI_CLI_NO_RELAUNCH : un seul processus au lieu de deux (environ 280 Mo au lieu de 460 Mo par tour).
+  // NO_BROWSER : sans connexion Google en cache, Gemini CLI sort avec le code 41 ; sinon, sur un poste
+  // avec navigateur (Windows), il demanderait sur stdin l'accord de l'ouvrir et prendrait le prompt pour la réponse
+  const childEnv = { ...process.env, NO_BROWSER: 'true', ...(relaunch ? {} : { GEMINI_CLI_NO_RELAUNCH: 'true' }), ...env };
+
   const args = ['--output-format', 'stream-json', '--approval-mode', approvalMode,
     resume ? '--resume' : '--session-id', sessionId];
   if (model) args.push('--model', model);
   if (skipTrust) args.push('--skip-trust'); // sinon, dossier non approuvé : sortie 55
-  for (const p of policies) args.push('--policy', quote(p));
+  // --policy remplace le dossier des politiques de l'utilisateur (~/.gemini/policies), qui ne serait plus
+  // chargé : on le repasse en tête. Lui et les fichiers du board ont le niveau utilisateur (Gemini CLI 0.65)
+  const userPolicies = userPoliciesDir(childEnv);
+  for (const p of policies.length && existsSync(userPolicies) ? [userPolicies, ...policies] : policies) {
+    args.push('--policy', quote(p));
+  }
 
   const nodeArgs = script && maxHeapMb ? [`--max-old-space-size=${maxHeapMb}`] : [];
   const child = spawn(script ? process.execPath : bin, script ? [...nodeArgs, script, ...args] : args, {
     cwd,
-    // GEMINI_CLI_NO_RELAUNCH : un seul processus au lieu de deux (environ 280 Mo au lieu de 460 Mo par tour).
-    // NO_BROWSER : sans connexion Google en cache, Gemini CLI sort avec le code 41 ; sinon, sur un poste
-    // avec navigateur (Windows), il demanderait sur stdin l'accord de l'ouvrir et prendrait le prompt pour la réponse
-    env: { ...process.env, NO_BROWSER: 'true', ...(relaunch ? {} : { GEMINI_CLI_NO_RELAUNCH: 'true' }), ...env },
+    env: childEnv,
     stdio: ['pipe', 'pipe', 'pipe'],
     shell: useShell,
     windowsHide: true,

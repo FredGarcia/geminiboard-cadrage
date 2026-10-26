@@ -211,17 +211,17 @@ test('chemins : POSIX et Windows reconnus à leur forme, quel que soit le systè
   assert.equal(inside('/travail/projet', '/travail/projet'), '');
   assert.equal(inside('/travail/projet', '/travail/projet-bis/a.md'), null);
   assert.equal(inside('/travail/projet', '/travail/..projet/a.md'), null);
-  assert.equal(inside('C:\\Users\\Fred\\projet', 'c:\\users\\fred\\projet\\docs\\a.md'), 'docs/a.md');
-  assert.equal(inside('C:\\Users\\Fred\\projet', 'D:\\projet\\a.md'), null);
+  assert.equal(inside('C:\\Users\\jean.dupont\\projet', 'c:\\users\\JEAN.DUPONT\\projet\\docs\\a.md'), 'docs/a.md');
+  assert.equal(inside('C:\\Users\\jean.dupont\\projet', 'D:\\projet\\a.md'), null);
   assert.equal(inside('\\\\serveur\\partage\\projet', '\\\\serveur\\partage\\projet\\x\\y.sql'), 'x/y.sql');
-  assert.equal(inside('C:\\Users\\Fred\\projet', 'docs\\a.md'), null, 'chemin relatif : pas sous la racine');
+  assert.equal(inside('C:\\Users\\jean.dupont\\projet', 'docs\\a.md'), null, 'chemin relatif : pas sous la racine');
 });
 
 test('Windows : projet trouvé sans tenir compte de la casse, artefact relatif au projet', () => {
   const { db, rec, proj } = freshBoard();
-  rec.board({ type: 'project.upsert', payload: { id: P, slug: 'board', name: 'Board', root_path: 'C:\\Users\\Fred\\GeminiBoard' }, at: T(0) });
-  recordTurn(rec, { sessionId: S1, runId: 'w1', prompt: 'Écris', start: 1, cwd: 'c:\\users\\fred\\geminiboard\\packages', events: [
-    { type: 'tool_use', tool_name: 'write_file', tool_id: 'x1', parameters: { file_path: 'C:\\Users\\Fred\\GeminiBoard\\docs\\Notes.MD', content: 'v1' } },
+  rec.board({ type: 'project.upsert', payload: { id: P, slug: 'board', name: 'Board', root_path: 'C:\\Users\\jean.dupont\\GeminiBoard' }, at: T(0) });
+  recordTurn(rec, { sessionId: S1, runId: 'w1', prompt: 'Écris', start: 1, cwd: 'c:\\users\\JEAN.DUPONT\\geminiboard\\packages', events: [
+    { type: 'tool_use', tool_name: 'write_file', tool_id: 'x1', parameters: { file_path: 'C:\\Users\\jean.dupont\\GeminiBoard\\docs\\Notes.MD', content: 'v1' } },
     { type: 'tool_result', tool_id: 'x1', status: 'success' },
     { type: 'tool_use', tool_name: 'write_file', tool_id: 'x2', parameters: { file_path: 'D:\\ailleurs\\script.sql', content: 'select 1;' } },
     { type: 'tool_result', tool_id: 'x2', status: 'success' },

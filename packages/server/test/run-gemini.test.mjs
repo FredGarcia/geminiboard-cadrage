@@ -2,11 +2,11 @@
 // Le faux CLI est lancé comme gemini.js : avec le node courant, sans shell (Linux et Windows).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { runGemini, resolveGeminiEntry, EXIT_CODES } from '../src/run-gemini.mjs';
+import { runGemini, resolveGeminiEntry, userPoliciesDir, EXIT_CODES } from '../src/run-gemini.mjs';
 import { uuidv7 } from '../src/uuidv7.mjs';
 
 const FAKE = fileURLToPath(new URL('./fake-gemini.mjs', import.meta.url));
@@ -45,6 +45,27 @@ test('tour suivant : --resume, mode, politique, --skip-trust', async () => {
     skipTrust: true, policies: ['/tmp/politique.toml'] });
   for (const a of ['"--resume"', '"auto_edit"', '"--skip-trust"', '"--policy","/tmp/politique.toml"']) {
     assert.ok(r.stderr.includes(a), `argument attendu : ${a}`);
+  }
+});
+
+test('politiques : le dossier de l\'utilisateur reste chargé quand le board ajoute les siennes', async () => {
+  const home = mkdtempSync(join(tmpdir(), 'gb-home-'));
+  try {
+    const env = { GEMINI_CLI_HOME: home };
+    // Sans dossier de politiques chez l'utilisateur : seules celles du board
+    const { r: r1 } = await turn({ prompt: 'x', sessionId: uuidv7(), resume: false, policies: ['/tmp/projet.toml'], env });
+    assert.ok(r1.stderr.includes('"--policy","/tmp/projet.toml"') && r1.stderr.split('"--policy"').length === 2, r1.stderr);
+    // Avec ~/.gemini/policies : repassé en premier (--policy le remplacerait sinon)
+    const dir = join(home, '.gemini', 'policies');
+    mkdirSync(dir, { recursive: true });
+    const { r: r2 } = await turn({ prompt: 'x', sessionId: uuidv7(), resume: false, policies: ['/tmp/projet.toml'], env });
+    assert.ok(r2.stderr.includes(`"--policy",${JSON.stringify(dir)},"--policy","/tmp/projet.toml"`), r2.stderr);
+    assert.equal(userPoliciesDir(env), dir);
+    // Sans politique du board : rien n'est ajouté, Gemini CLI charge le dossier de lui-même
+    const { r: r3 } = await turn({ prompt: 'x', sessionId: uuidv7(), resume: false, env });
+    assert.ok(!r3.stderr.includes('--policy'), r3.stderr);
+  } finally {
+    rmSync(home, { recursive: true, force: true });
   }
 });
 

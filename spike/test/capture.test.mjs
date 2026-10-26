@@ -128,8 +128,8 @@ test('masquage : formes Windows des chemins, nom court, nom d\'utilisateur, clé
   ];
   for (const [input, expected] of cases) assert.equal(win(input), expected, input);
   // Hors Windows : comparaison exacte, sensible à la casse
-  const posix = createRedactor([['/home/fred', '<HOME>']], { windows: false, username: 'fred' });
-  assert.equal(posix('/home/fred/a /home/Fred/b fred'), '<HOME>/a /home/Fred/b <USER>');
+  const posix = createRedactor([['/home/jean.dupont', '<HOME>']], { windows: false, username: 'jean.dupont' });
+  assert.equal(posix('/home/jean.dupont/a /home/Jean.Dupont/b jean.dupont'), '<HOME>/a /home/Jean.Dupont/b <USER>');
 });
 
 test('mémoire : pic mesuré par tour (Linux), lecture des formats de tasklist (Windows)', async () => {

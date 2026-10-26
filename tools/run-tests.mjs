@@ -10,6 +10,8 @@ const TEST_FILES = [
   'packages/server/test/projector.test.mjs',
   'packages/server/test/corpus.test.mjs',
   'spike/test/capture.test.mjs',
+  'tools/test/check-components.test.mjs',
+  'tools/test/skill-scripts.test.mjs',
 ];
 
 const root = fileURLToPath(new URL('..', import.meta.url));

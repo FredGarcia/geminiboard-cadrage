@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // catalogue.mjs : spike S5. Vérifie, sur le vrai Gemini CLI et sans compte, le mécanisme d'activation
-// proposé pour le catalogue (docs/catalogue.md) : une extension par projet, générée par le board, liée
+// du catalogue (README, §9.4) : une extension par projet, générée par le board, liée
 // une fois, désactivée partout puis activée pour le seul dossier du projet.
 // Isolé : GEMINI_CLI_HOME pointe vers un dossier temporaire, la configuration de l'utilisateur n'est pas touchée.
 // Node.js 20 ou plus, sans dépendance. Usage : node spike/catalogue.mjs [--entry <gemini.js>] [--keep]

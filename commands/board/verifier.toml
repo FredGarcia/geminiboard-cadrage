@@ -1,0 +1,15 @@
+description = "Lance les contrôles du dépôt et explique chaque échec (argument possible : --sans-tests)"
+prompt = '''
+Active la skill `geminiboard`. Voici le résultat des contrôles du dépôt, lancés à l'instant par `skills/geminiboard/scripts/verifier.mjs` :
+
+!{node skills/geminiboard/scripts/verifier.mjs {{args}}}
+
+Pour chaque ligne KO, puis pour chaque ligne AVERT :
+- dis en une phrase ce qui ne va pas, et cite le fichier et la ligne en cause ;
+- rattache le constat à son invariant (`skills/geminiboard/references/invariants.md`) ou à la règle de test concernée (`skills/geminiboard/references/tests.md`) ;
+- propose la correction, sans l'appliquer.
+
+Si une ligne indique des données sensibles, ne recopie pas la valeur trouvée dans ta réponse : cite seulement le fichier et la ligne.
+Si tout est OK, dis-le en une ligne et rappelle, le cas échéant, que les tests n'ont pas été lancés (--sans-tests).
+Ne corrige rien sans l'accord de l'humain.
+'''

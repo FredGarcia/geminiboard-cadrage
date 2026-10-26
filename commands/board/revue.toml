@@ -1,0 +1,14 @@
+description = "Relecture de la branche par le sous-agent relecteur-board (argument : points d'attention)"
+prompt = '''
+Active la skill `geminiboard`. État du dépôt et fichiers qui diffèrent de la branche de base :
+
+!{node skills/geminiboard/scripts/etat.mjs --fichiers}
+
+1. Confie la relecture au sous-agent `relecteur-board`. Transmets-lui, dans sa consigne :
+   - l'objet de la branche et l'étape de la feuille de route ;
+   - la liste des fichiers ci-dessus, avec leur statut ;
+   - les points d'attention de l'humain, s'il y en a : {{args}}
+2. Quand il a rendu ses constats, vérifie chacun en relisant le passage cité ; écarte ceux qui ne tiennent pas, en disant pourquoi.
+3. Présente les constats retenus par gravité (bloquant, à corriger, remarque), avec le fichier, la ligne et la correction proposée. Ajoute les tiens s'il en a manqué.
+4. Ne corrige rien sans l'accord de l'humain.
+'''

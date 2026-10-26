@@ -1,0 +1,23 @@
+description = "Situe le dépôt et prépare une étape de la feuille de route (argument : numéro d'étape)"
+prompt = '''
+Tu travailles dans le dépôt GeminiBoard (geminiboard-cadrage). Active la skill `geminiboard` et suis sa méthode : situer, proposer, appliquer, vérifier, livrer. Cette commande couvre les deux premiers temps.
+
+Étape demandée : {{args}}
+Sans numéro, prends l'étape de la branche courante (etape-<n>-<objet>), sinon la première étape non close de la feuille de route.
+
+État du dépôt, relevé à l'instant :
+
+!{node skills/geminiboard/scripts/etat.mjs}
+
+1. Situer.
+   - Si des propositions attendent leur ratification et que la PR qui les portait est fusionnée, propose d'abord de les consigner en décisions (Dn), comme l'indique `skills/geminiboard/references/redaction.md`.
+   - Lis la fiche de l'étape dans `skills/geminiboard/references/etapes.md`, puis les sections du README qu'elle cite, puis le code et les tests concernés.
+   - Relève les décisions (Dn) et les questions (Qn) qui pèsent sur l'étape.
+2. Proposer. Présente un plan court :
+   - livrables, et fichiers à créer ou à modifier ;
+   - tests à ajouter, et invariants concernés (`skills/geminiboard/references/invariants.md`) ;
+   - sections du README à mettre à jour ;
+   - questions à soumettre à l'humain, numérotées à la suite (Qn, « (proposé) ») ;
+   - nom de branche si la branche courante est `main`.
+3. Arrête-toi là. N'écris rien et ne lance aucune commande qui modifie le dépôt avant l'accord explicite de l'humain sur ce plan.
+'''

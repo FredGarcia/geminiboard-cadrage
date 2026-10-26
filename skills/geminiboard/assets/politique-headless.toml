@@ -1,0 +1,29 @@
+# Politique Gemini CLI pour les commandes /board:* en headless. En interactif, Gemini CLI demande
+# confirmation et ce fichier n'est pas nécessaire ; en headless, personne ne peut confirmer, et Gemini
+# CLI 0.65 refuse par défaut les commandes shell (donc les injections !{…}) et l'activation des skills.
+#
+# Une extension ne peut pas autoriser (Gemini CLI 0.65 ignore ses règles allow) : ce fichier ne se
+# trouve donc pas dans policies/, il se passe à chaque exécution, depuis la racine du dépôt :
+#   gemini --policy skills/geminiboard/assets/politique-headless.toml -p "/board:verifier --sans-tests"
+
+# Scripts de la skill lancés par les injections !{…}. commandPrefix vise la commande suivie d'un blanc
+# ou de rien : les options restent libres. La même commande enchaînée à une autre (;, &&, |) ou
+# redirigée (>) reste refusée en headless (vérifié sur Gemini CLI 0.65.0).
+[[rule]]
+toolName = "run_shell_command"
+commandPrefix = "node skills/geminiboard/scripts/etat.mjs"
+decision = "allow"
+priority = 100
+
+[[rule]]
+toolName = "run_shell_command"
+commandPrefix = "node skills/geminiboard/scripts/verifier.mjs"
+decision = "allow"
+priority = 100
+
+# Activation de la skill geminiboard, et d'elle seule, par le modèle (outil activate_skill)
+[[rule]]
+toolName = "activate_skill"
+argsPattern = "\"name\":\\s*\"geminiboard\""
+decision = "allow"
+priority = 100

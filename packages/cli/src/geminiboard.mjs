@@ -7,6 +7,7 @@ import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { parseArgs } from 'node:util';
 import WebSocket from 'ws';
+import { CAPTURE_POLICIES } from '@geminiboard/server/capture.mjs';
 import { inside } from '@geminiboard/server/projector.mjs';
 
 export const USAGE = `Usage : geminiboard <commande> [options]
@@ -17,6 +18,8 @@ export const USAGE = `Usage : geminiboard <commande> [options]
   projet ajouter <dossier> [--nom <nom>] [--capture full|metadata|off]
   projet approuver <projet>          approuve le dossier : Gemini CLI y tournera avec --skip-trust
   projet retirer <projet>            retire l'approbation du dossier
+  projet capture <projet> full|metadata|off
+                                     change la politique de capture, pour les tours suivants
   discuter [--projet <projet>] [--discussion <id>] [--mode default|auto_edit|yolo|plan] [--modele <nom>] [texte…]
                                      envoie un prompt (texte en argument, sinon sur l'entrée standard) et
                                      affiche la réponse au fil de l'eau ; Ctrl+C arrête le tour
@@ -130,7 +133,17 @@ export function createClient(io) {
         } else io.out(`Approbation retirée : ${project.root_path}\n`);
         return 0;
       }
-      throw new CliError('action attendue : ajouter, approuver ou retirer', 2);
+      if (action === 'capture') {
+        const policy = args[2];
+        if (!target || !CAPTURE_POLICIES.includes(policy)) {
+          throw new CliError(`usage : geminiboard projet capture <projet> ${CAPTURE_POLICIES.join('|')}`, 2);
+        }
+        const p = await findProject(target);
+        const { project } = await api('PATCH', `/api/projects/${p.id}`, { capture: policy });
+        io.out(`Capture du projet ${project.slug} : ${project.capture}, pour les tours suivants.\n`);
+        return 0;
+      }
+      throw new CliError('action attendue : ajouter, approuver, retirer ou capture', 2);
     },
 
     async discussions(args, opts) {

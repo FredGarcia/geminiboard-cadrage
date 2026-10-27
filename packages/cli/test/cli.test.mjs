@@ -60,7 +60,7 @@ test('usage : aide, commande ou option inconnue, serveur injoignable', async () 
   assert.match(r.err, /serveur injoignable \(http:\/\/127\.0\.0\.1:9\)/);
 });
 
-test('projets : ajout (chemin relatif au dossier courant), approbation, retrait ; refus d\'un dossier non approuvé', async () => {
+test('projets : ajout (chemin relatif au dossier courant), approbation, retrait, capture ; refus d\'un dossier non approuvé', async () => {
   const s = await setup();
   try {
     let r = await s.run(['projet', 'ajouter', 'mon projet', '--capture', 'metadata']);
@@ -81,6 +81,11 @@ test('projets : ajout (chemin relatif au dossier courant), approbation, retrait 
     assert.equal((await s.run(['projet', 'approuver', 'absent'])).code, 2);
     assert.equal((await s.run(['projet', 'ajouter', 'mon projet'])).code, 1, 'dossier déjà enregistré');
     assert.equal((await s.run(['projet', 'deplacer'])).code, 2);
+    r = await s.run(['projet', 'capture', 'mon-projet', 'full']);
+    assert.equal(r.code, 0, r.err);
+    assert.match(r.out, /Capture du projet mon-projet : full, pour les tours suivants/);
+    assert.match((await s.run(['projets'])).out, /capture full /);
+    assert.equal((await s.run(['projet', 'capture', 'mon-projet', 'partielle'])).code, 2);
   } finally { await s.close(); }
 });
 

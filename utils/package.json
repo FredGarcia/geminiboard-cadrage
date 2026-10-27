@@ -8,7 +8,8 @@
   "scripts": {
     "capture": "node jira-capture-app.mjs",
     "capture:cli": "node jira-capture-mhtml.mjs",
-    "export": "node jira-sprint-app.mjs"
+    "export": "node jira-sprint-app.mjs",
+    "test": "node test/run-tests.mjs"
   },
   "dependencies": {
     "playwright-core": "1.63.0"

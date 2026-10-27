@@ -1,9 +1,9 @@
 #!/usr/bin/env node
-// jira-capture-app.mjs : interface locale qui enregistre en MHTML la page d'un sprint Jira protégé par un SSO.
-//   1. On indique l'adresse de la page du sprint et le dossier de sortie, puis « Ouvrir le sprint » :
-//      le navigateur s'ouvre sur un profil dédié, et l'on s'y connecte soi-même (SSO, MFA).
-//   2. « Capturer » fait défiler la page jusqu'à ce qu'aucun ticket nouveau n'apparaisse, revient en haut,
-//      enregistre la page en MHTML et ferme le navigateur.
+// jira-capture-app.mjs : interface locale qui capture en MHTML les tickets d'un sprint Jira protégé par un SSO.
+//   1. « Ouvrir le sprint » : le navigateur s'ouvre sur un profil dédié ; on s'y connecte soi-même (SSO, MFA).
+//   2. « Capturer les tickets » : sur la page du sprint, chaque lien /browse/<CLÉ> retenu par le filtre
+//      (préfixe, numéros) est ouvert, enregistré en MHTML et rangé dans le dossier de sa catégorie, reconnue
+//      au terme clé que contient la page du ticket. La page suit l'avancement, puis affiche le rapport.
 // Aucun identifiant ne passe par l'application. Session SSO dans utils/.jira-profile/, captures dans
 // utils/mhtml/ par défaut : git les ignore (données de client, dépôt public).
 // Node.js 20, playwright-core et Chrome installé sur le poste (ou Edge : JIRA_CAPTURE_CHANNEL=msedge).
@@ -11,7 +11,9 @@
 import http from 'node:http';
 import { readFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
-import { captureMhtml, launchBrowser, loadAllTickets, outputFolder, writeCapture } from './jira-capture-core.mjs';
+import {
+  DEFAULT_CATEGORIES, captureSprintTickets, firstLine, launchBrowser, outputFolder, parseCategories, parseFilter,
+} from './jira-capture-core.mjs';
 
 const HOST = '127.0.0.1';
 const PORT = Number(process.env.PORT || 3100);
@@ -19,6 +21,7 @@ const PAGE_FILE = fileURLToPath(new URL('./public/capture.html', import.meta.url
 const LOCAL_HOSTS = new Set(['127.0.0.1', 'localhost']);
 
 let session = null; // { context, page }
+let job = { state: 'idle' }; // state : idle, running, done, failed
 
 class HttpError extends Error {
   constructor(status, message) {
@@ -26,8 +29,6 @@ class HttpError extends Error {
     this.status = status;
   }
 }
-
-const firstLine = (err) => String(err?.message ?? err).split('\n')[0];
 
 /** Nom d'hôte d'un en-tête Host (« 127.0.0.1:3100 » donne « 127.0.0.1 »). */
 const hostnameOf = (host) => String(host ?? '').match(/^([^:]+)(?::\d+)?$/)?.[1].toLowerCase() ?? null;
@@ -60,6 +61,8 @@ function parseUrl(raw) {
   return u.href;
 }
 
+const busy = () => job.state === 'running';
+
 async function closeSession() {
   const current = session;
   session = null;
@@ -68,6 +71,7 @@ async function closeSession() {
 
 /** Ouvre le navigateur sur la page ; rend false si la page n'a pas fini de charger (redirection SSO lente). */
 async function openSprint(rawUrl) {
+  if (busy()) throw new HttpError(409, 'Une capture est en cours');
   const url = parseUrl(rawUrl);
   await closeSession();
   let context;
@@ -89,31 +93,36 @@ async function openSprint(rawUrl) {
   }
 }
 
-async function captureSprint(rawFolder) {
+/** Lance la capture en tâche de fond ; l'avancement se lit par GET /api/status. */
+function startCapture(body) {
   if (!session) throw new HttpError(409, "Ouvrez d'abord la page du sprint");
+  if (busy()) throw new HttpError(409, 'Une capture est déjà en cours');
+  let filter;
+  let categories;
+  try {
+    filter = parseFilter(body);
+    categories = parseCategories(body.categories ?? DEFAULT_CATEGORIES);
+  } catch (err) {
+    throw new HttpError(400, err.message);
+  }
   const { context } = session;
   // L'onglet ouvert par l'application ; s'il a été fermé, le dernier onglet ouvert
   const page = session.page.isClosed() ? context.pages().at(-1) : session.page;
   if (!page) throw new HttpError(409, 'Aucun onglet ouvert : rouvrez le sprint');
-  const folder = outputFolder(rawFolder);
 
-  let tickets;
-  let data;
-  try {
-    tickets = await loadAllTickets(page);
-    data = await captureMhtml(context, page);
-  } catch (err) {
+  const current = { state: 'running', step: 'liste', done: 0, total: 0, key: null, startedAt: Date.now() };
+  job = current;
+  captureSprintTickets(context, page, {
+    folder: outputFolder(body.folder), filter, categories, onProgress: (p) => Object.assign(current, p),
+  }).then(async (report) => {
+    Object.assign(current, { state: 'done', report });
+    // Sans échec, le navigateur se ferme ; sinon, il revient au sprint pour une nouvelle tentative
+    if (!report.errors && !report.aborted) await closeSession();
+    else if (!page.isClosed()) await page.goto(report.sprintUrl, { waitUntil: 'domcontentloaded' }).catch(() => {});
+  }).catch((err) => {
     console.error(err);
-    throw new HttpError(409, `Capture impossible, la fenêtre a-t-elle été fermée ? Rouvrez le sprint (${firstLine(err)})`);
-  }
-  let file;
-  try {
-    file = await writeCapture(folder, data);
-  } catch (err) {
-    throw new HttpError(400, `Écriture impossible dans ${folder} (${err.code ?? firstLine(err)})`);
-  }
-  await closeSession();
-  return { file, ...tickets };
+    Object.assign(current, { state: 'failed', error: `Capture interrompue (${firstLine(err)})` });
+  });
 }
 
 async function readJson(req) {
@@ -130,7 +139,7 @@ async function readJson(req) {
 }
 
 function sendJson(res, status, payload) {
-  res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8' });
+  res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
   res.end(JSON.stringify(payload));
 }
 
@@ -141,20 +150,25 @@ const server = http.createServer(async (req, res) => {
       res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
       return res.end(await readFile(PAGE_FILE));
     }
+    if (req.method === 'GET' && req.url === '/api/status') {
+      return sendJson(res, 200, { browser: Boolean(session), job });
+    }
     if (req.method === 'POST' && req.url === '/api/open') {
       const loaded = await openSprint((await readJson(req)).url);
       return sendJson(res, 200, {
         message: loaded
-          ? "Le navigateur est ouvert sur le sprint. Connectez-vous, attendez l'affichage du tableau, puis cliquez sur « Capturer »."
-          : "Le navigateur est ouvert, mais la page n'a pas fini de charger. Terminez la connexion dans la fenêtre, affichez le sprint, puis cliquez sur « Capturer ».",
+          ? "Le navigateur est ouvert sur le sprint. Connectez-vous, attendez l'affichage des tickets, puis cliquez sur « Capturer les tickets »."
+          : "Le navigateur est ouvert, mais la page n'a pas fini de charger. Terminez la connexion dans la fenêtre, affichez le sprint, puis cliquez sur « Capturer les tickets ».",
       });
     }
     if (req.method === 'POST' && req.url === '/api/capture') {
-      return sendJson(res, 200, await captureSprint((await readJson(req)).folder));
+      startCapture(await readJson(req));
+      return sendJson(res, 202, { message: 'Capture lancée' });
     }
     if (req.method === 'POST' && req.url === '/api/close') {
+      const stopping = busy(); // fermer le navigateur arrête la capture en cours, qui rend un rapport partiel
       await closeSession();
-      return sendJson(res, 200, { message: 'Navigateur fermé' });
+      return sendJson(res, 200, { message: stopping ? 'Navigateur fermé : capture arrêtée' : 'Navigateur fermé' });
     }
     sendJson(res, 404, { error: 'Introuvable' });
   } catch (err) {
@@ -165,7 +179,7 @@ const server = http.createServer(async (req, res) => {
 });
 
 server.listen(PORT, HOST, () => {
-  console.log(`Application prête : ouvrez http://${HOST}:${PORT} (Ctrl+C pour arrêter)`);
+  console.log(`Application prête : ouvrez http://${HOST}:${server.address().port} (Ctrl+C pour arrêter)`);
 });
 
 process.on('SIGINT', async () => {

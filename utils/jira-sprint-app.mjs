@@ -215,5 +215,5 @@ const server = http.createServer(async (req, res) => {
 });
 
 server.listen(PORT, HOST, () => {
-  console.log(`Application prête : ouvrez http://${HOST}:${PORT} dans votre navigateur (Ctrl+C pour arrêter)`);
+  console.log(`Application prête : ouvrez http://${HOST}:${server.address().port} dans votre navigateur (Ctrl+C pour arrêter)`);
 });

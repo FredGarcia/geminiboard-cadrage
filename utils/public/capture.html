@@ -3,130 +3,261 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Capture du sprint Jira en MHTML</title>
+<title>Capture des tickets du sprint Jira</title>
 <style>
-  body { font-family: system-ui, sans-serif; max-width: 800px; margin: 2rem auto; padding: 0 1rem; color: #1f2933; }
+  body { font-family: system-ui, sans-serif; max-width: 960px; margin: 2rem auto; padding: 0 1rem; color: #1f2933; }
   h1 { font-size: 1.5rem; }
-  label { display: flex; flex-direction: column; gap: .3rem; margin-bottom: 1rem; font-size: .95rem; }
-  input { padding: .55rem; font-size: 1rem; border: 1px solid #9aa5b1; border-radius: 4px; }
-  .buttons { display: flex; gap: .75rem; flex-wrap: wrap; margin: 1rem 0; }
+  h2 { font-size: 1.2rem; margin-top: 2rem; }
+  ol { line-height: 1.6; }
+  .grid { display: grid; grid-template-columns: 1fr 1fr; gap: .75rem 1rem; }
+  .wide { grid-column: 1 / -1; }
+  label, legend { display: flex; flex-direction: column; gap: .3rem; font-size: .95rem; }
+  fieldset { border: 0; margin: 0; padding: 0; display: flex; gap: .75rem; align-items: end; }
+  legend { margin-bottom: .3rem; }
+  input, textarea { padding: .5rem; font: inherit; border: 1px solid #9aa5b1; border-radius: 4px; }
+  textarea { min-height: 3.5rem; resize: vertical; }
+  .hint { font-size: .85rem; color: #52606d; }
+  .buttons { display: flex; gap: .75rem; flex-wrap: wrap; margin: 1.25rem 0 .5rem; }
   button { padding: .6rem 1rem; font-size: 1rem; cursor: pointer; }
   button:disabled { opacity: .5; cursor: not-allowed; }
-  ol { line-height: 1.6; }
-  #status { min-height: 2.5rem; margin-top: 1rem; padding: .6rem; background: #f0f3f6; border-radius: 4px; white-space: pre-wrap; }
+  progress { width: 100%; height: 1rem; }
+  #status { min-height: 2.5rem; margin-top: .75rem; padding: .6rem; background: #f0f3f6; border-radius: 4px; white-space: pre-wrap; }
   #status.err { background: #fde8e8; color: #b42318; }
-  .note { font-size: .85rem; color: #52606d; }
+  .warn { background: #fff4e5; color: #7a4100; padding: .6rem; border-radius: 4px; }
+  table { border-collapse: collapse; width: 100%; font-size: .85rem; margin-top: 1rem; }
+  caption { text-align: left; font-weight: 600; margin-bottom: .4rem; }
+  th, td { border: 1px solid #d9dee3; padding: .35rem .5rem; text-align: left; vertical-align: top; }
+  th { background: #f0f3f6; }
+  td.err { color: #b42318; }
+  td:first-child { white-space: nowrap; }
+  @media (max-width: 640px) { .grid { grid-template-columns: 1fr; } }
 </style>
 </head>
 <body>
 <h1>Capture des tickets du sprint (MHTML)</h1>
 
 <ol>
-  <li>Collez l'adresse de la page du sprint (ou du tableau) et choisissez le dossier de sortie.</li>
-  <li>Cliquez sur « Ouvrir le sprint » : le navigateur s'ouvre, connectez-vous via le SSO.</li>
-  <li>Quand le tableau est affiché, cliquez sur « Capturer ». L'application fait défiler la page jusqu'à ce qu'aucun ticket nouveau n'apparaisse, puis enregistre la page et ferme le navigateur.</li>
+  <li>Collez l'adresse de la page du sprint, puis cliquez sur « Ouvrir le sprint » : le navigateur s'ouvre, connectez-vous via le SSO.</li>
+  <li>Quand les tickets sont affichés, cliquez sur « Capturer les tickets ». Chaque ticket retenu par le filtre est ouvert, enregistré en MHTML et rangé dans le dossier de sa catégorie.</li>
 </ol>
 
-<label>Adresse de la page du sprint
-  <input id="url" type="url" placeholder="https://votre-org.atlassian.net/jira/software/c/projects/XXX/boards/42/backlog">
-</label>
+<div class="grid">
+  <label class="wide">Adresse de la page du sprint
+    <input id="url" type="url" placeholder="https://votre-org.atlassian.net/jira/software/c/projects/XXX/boards/42/backlog">
+  </label>
 
-<label>Dossier de sortie (relatif au dossier utils/, ou chemin absolu)
-  <input id="folder" type="text" value="mhtml">
-</label>
+  <label>Préfixe des clés de tickets
+    <input id="prefix" type="text" placeholder="ex. ABC" aria-describedby="prefix-hint" autocapitalize="characters" spellcheck="false">
+    <span id="prefix-hint" class="hint">Début de la clé (ABC retient ABCDE-123) ; vide : tous les tickets.</span>
+  </label>
+
+  <fieldset>
+    <legend>Numéros des tickets</legend>
+    <label>de <input id="min" type="number" min="0" step="1" inputmode="numeric"></label>
+    <label>à <input id="max" type="number" min="0" step="1" inputmode="numeric"></label>
+  </fieldset>
+
+  <label>Catégories (une par ligne)
+    <textarea id="categories" aria-describedby="categories-hint">ticket avec ia
+ticket sans ia</textarea>
+    <span id="categories-hint" class="hint">Terme clé cherché dans la page du ticket, et nom du dossier ; sans terme, ou avec plusieurs : « à classer ».</span>
+  </label>
+
+  <label>Dossier de sortie
+    <input id="folder" type="text" value="mhtml" aria-describedby="folder-hint" spellcheck="false">
+    <span id="folder-hint" class="hint">Relatif au dossier utils/, ou chemin absolu ; chaque capture y crée un sous-dossier daté.</span>
+  </label>
+</div>
 
 <div class="buttons">
   <button id="open" type="button">Ouvrir le sprint</button>
-  <button id="capture" type="button" disabled>Capturer</button>
+  <button id="capture" type="button" disabled>Capturer les tickets</button>
   <button id="close" type="button">Fermer le navigateur</button>
 </div>
+<p class="hint">Les valeurs saisies sont gardées dans ce navigateur, pas dans le dépôt. Fermer le navigateur arrête une capture en cours.</p>
 
+<progress id="progress" max="1" value="0" aria-label="Avancement de la capture" hidden></progress>
 <div id="status" role="status" aria-live="polite"></div>
-<p class="note">
-  La session SSO est conservée dans <code>utils/.jira-profile/</code> pour les prochaines fois : ce dossier contient des cookies, il ne se partage pas.
-  Git ignore ce dossier, <code>utils/mhtml/</code> et tout fichier <code>.mhtml</code>.
-</p>
+
+<section id="report" hidden>
+  <h2>Rapport de la capture</h2>
+  <p id="report-folder"></p>
+  <ul id="report-summary"></ul>
+  <p id="report-warning" class="warn" hidden></p>
+  <table>
+    <caption>Tickets capturés</caption>
+    <thead><tr><th scope="col">Ticket</th><th scope="col">Dossier</th><th scope="col">Terme trouvé</th><th scope="col">Extrait ou erreur</th></tr></thead>
+    <tbody id="report-rows"></tbody>
+  </table>
+</section>
 
 <script>
   const $ = (id) => document.getElementById(id);
+  const FIELDS = ['url', 'prefix', 'min', 'max', 'categories', 'folder'];
+  const STORE = 'jira-capture:';
   let opened = false;
+  let running = false;
+
+  // Valeurs gardées dans ce navigateur (stockage local) : jamais dans le dépôt
+  function restore() {
+    for (const id of FIELDS) {
+      try { const v = localStorage.getItem(STORE + id); if (v !== null) $(id).value = v; } catch { /* stockage indisponible */ }
+    }
+  }
+  function remember() {
+    for (const id of FIELDS) {
+      try { localStorage.setItem(STORE + id, $(id).value); } catch { /* stockage indisponible */ }
+    }
+  }
 
   function setStatus(text, isError = false) {
-    $('status').textContent = text;
-    $('status').className = isError ? 'err' : '';
+    const el = $('status');
+    if (el.textContent !== text) el.textContent = text; // pas de nouvelle annonce si rien ne change
+    el.className = isError ? 'err' : '';
   }
 
-  function setBusy(busy) {
-    $('open').disabled = busy;
-    $('capture').disabled = busy || !opened;
+  function refreshButtons() {
+    $('open').disabled = running;
+    $('capture').disabled = running || !opened;
   }
 
-  async function post(url, body) {
+  async function call(method, url, body) {
     const r = await fetch(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
+      method,
+      headers: body === undefined ? {} : { 'Content-Type': 'application/json' },
+      body: body === undefined ? undefined : JSON.stringify(body),
     });
     const data = await r.json();
     if (!r.ok) throw new Error(data.error || `Erreur HTTP ${r.status}`);
     return data;
   }
 
-  function captureReport(data) {
-    const lines = [
-      'Capture enregistrée :',
-      data.file,
-      '',
-      `Tickets repérés pendant le défilement : ${data.seen} ; présents dans la capture : ${data.present}.`,
-    ];
-    if (data.seen === 0) {
-      lines.push("Aucun lien vers un ticket : la page capturée n'était peut-être pas encore le tableau (connexion inachevée ?).");
-    } else if (data.present < data.seen) {
-      lines.push(`La page retire les cartes sorties de l'écran : la capture n'en contient que ${data.present} sur ${data.seen}. Réduisez le zoom du navigateur (Ctrl -) pour afficher plus de cartes à la fois, puis recommencez.`);
+  function el(tag, text, className) {
+    const node = document.createElement(tag);
+    node.textContent = text ?? '';
+    if (className) node.className = className;
+    return node;
+  }
+
+  function renderReport(report) {
+    $('report').hidden = false;
+    $('report-folder').textContent = `Dossier : ${report.folder}`;
+    const summary = $('report-summary');
+    summary.replaceChildren();
+    const sample = report.ignoredSample.length ? ` (par exemple ${report.ignoredSample.slice(0, 5).join(', ')})` : '';
+    summary.append(el('li', `Tickets sur la page du sprint : ${report.listed} ; retenus par le filtre : ${report.selected} ; ignorés : ${report.ignored}${sample}`));
+    for (const [name, n] of Object.entries(report.counts)) summary.append(el('li', `${name} : ${n}`));
+    summary.append(el('li', `erreurs : ${report.errors}`));
+
+    const warning = $('report-warning');
+    const notes = [];
+    if (report.selected === 0) notes.push('Aucun ticket ne passe le filtre : vérifiez le préfixe et les numéros, et que la page affichée est bien celle du sprint.');
+    if (report.aborted) notes.push('Capture arrêtée après plusieurs échecs de suite : vérifiez la session dans le navigateur, resté ouvert sur le sprint, puis relancez.');
+    else if (report.errors) notes.push('Des tickets ont échoué : le navigateur est resté ouvert sur le sprint, relancez la capture.');
+    warning.textContent = notes.join(' ');
+    warning.hidden = notes.length === 0;
+
+    const rows = $('report-rows');
+    rows.replaceChildren();
+    for (const t of report.tickets) {
+      const tr = document.createElement('tr');
+      const keyCell = document.createElement('td');
+      const link = el('a', t.key);
+      link.href = t.url;
+      link.target = '_blank';
+      link.rel = 'noopener';
+      keyCell.append(link);
+      tr.append(keyCell);
+      tr.append(el('td', t.error ? '—' : (t.category ?? 'à classer')));
+      tr.append(el('td', t.error ? '—' : t.found.length ? `${t.found.join(' + ')} (${t.where})` : 'aucun'));
+      tr.append(t.error ? el('td', t.error, 'err') : el('td', t.excerpt ?? (t.found.length > 1 ? 'plusieurs catégories trouvées' : 'aucun terme clé dans la page')));
+      rows.append(tr);
     }
-    return lines.join('\n');
+  }
+
+  function showProgress(job) {
+    const bar = $('progress');
+    bar.hidden = false;
+    if (job.step === 'tickets' && job.total) {
+      bar.max = job.total;
+      bar.value = job.done;
+      setStatus(`Ticket ${job.done + 1} sur ${job.total} : ${job.key}…`);
+    } else {
+      bar.removeAttribute('value'); // avancement indéterminé
+      setStatus('Relevé des tickets sur la page du sprint…');
+    }
+  }
+
+  async function poll() {
+    try {
+      const { browser, job } = await call('GET', '/api/status');
+      opened = browser;
+      running = job.state === 'running';
+      if (running) {
+        showProgress(job);
+        setTimeout(poll, 1000);
+      } else {
+        $('progress').hidden = true;
+        if (job.state === 'done') {
+          const r = job.report;
+          setStatus(`Capture terminée : ${r.tickets.length - r.errors} tickets enregistrés sur ${r.selected}${r.errors ? `, ${r.errors} en erreur` : ''}.`, r.errors > 0 || r.aborted);
+          renderReport(r);
+        } else if (job.state === 'failed') {
+          setStatus(job.error, true);
+        }
+      }
+    } catch (err) {
+      running = false;
+      setStatus('Erreur : ' + err.message, true);
+    }
+    refreshButtons();
   }
 
   $('open').addEventListener('click', async () => {
-    setBusy(true);
+    remember();
+    $('open').disabled = true;
     setStatus('Ouverture du navigateur…');
     try {
-      const data = await post('/api/open', { url: $('url').value.trim() });
+      const data = await call('POST', '/api/open', { url: $('url').value.trim() });
       opened = true;
       setStatus(data.message);
     } catch (err) {
       opened = false;
       setStatus('Erreur : ' + err.message, true);
-    } finally {
-      setBusy(false);
     }
+    refreshButtons();
   });
 
   $('capture').addEventListener('click', async () => {
-    setBusy(true);
-    setStatus('Chargement des tickets et capture en cours… (une minute au plus)');
+    remember();
+    $('report').hidden = true;
     try {
-      const data = await post('/api/capture', { folder: $('folder').value.trim() });
-      opened = false;
-      setStatus(captureReport(data));
+      await call('POST', '/api/capture', {
+        prefix: $('prefix').value, min: $('min').value, max: $('max').value,
+        categories: $('categories').value, folder: $('folder').value,
+      });
+      running = true;
+      refreshButtons();
+      poll();
     } catch (err) {
       setStatus('Erreur : ' + err.message, true);
-    } finally {
-      setBusy(false);
     }
   });
 
   $('close').addEventListener('click', async () => {
     try {
-      const data = await post('/api/close', {});
+      const data = await call('POST', '/api/close', {});
       opened = false;
       setStatus(data.message);
     } catch (err) {
       setStatus('Erreur : ' + err.message, true);
-    } finally {
-      setBusy(false);
     }
+    refreshButtons();
   });
+
+  for (const id of FIELDS) $(id).addEventListener('change', remember);
+  restore();
+  poll(); // reprend l'avancement d'une capture en cours si la page est rechargée
 </script>
 </body>
 </html>

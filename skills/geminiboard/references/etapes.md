@@ -32,27 +32,29 @@ README v0.2, décisions D1 à D12 (PR #2). Les décisions suivantes s'ajoutent a
 - Reste, une fois le corpus réel committé : le rejouer (`packages/server/test/corpus.test.mjs` le prend en compte de lui-même), relever les écarts (types d'événements, champs, ordre des fragments), corriger les règles de projection (`PROJECTOR_VERSION` + 1) et, si le schéma doit changer, écrire une migration 002 (`/board:migration`). Sa fusion ratifie le schéma v1.
 - À lire : README §6.2 et §7, `fixtures/README.md`, `references/invariants.md` (invariants 2 et 3).
 
-## 3. Skill de construction — en cours (PR #8)
+## 3. Skill de construction — fait (PR #8)
 
-- Livrable : cette skill (`skills/geminiboard/SKILL.md`, ses références et ses scripts), les commandes `/board:*` (`commands/board/`), le sous-agent `agents/relecteur-board.md`, l'extension du dépôt (`gemini-extension.json`, `AGENTS.md`) et les contrôles `tools/check-components.mjs` et `tools/check-extension.mjs`.
-- Ratification : skill 1.0.0 (version de `gemini-extension.json`).
-- Toute évolution de la skill passe ensuite par une PR qui incrémente cette version : correctif 1.0.1, ajout 1.1.0.
+- Livré : cette skill (`skills/geminiboard/SKILL.md`, ses références et ses scripts), les commandes `/board:*` (`commands/board/`), le sous-agent `agents/relecteur-board.md`, l'extension du dépôt (`gemini-extension.json`, `AGENTS.md`) et les contrôles `tools/check-components.mjs` et `tools/check-extension.mjs`. Skill 1.0.0 ratifiée par la fusion de la PR #8 ; Q10 tranchée (D19).
+- Toute évolution de la skill passe par une PR qui incrémente la version de `gemini-extension.json` : correctif 1.0.1, ajout 1.1.0. La 1.1.0 accompagne l'étape 4 (PR #9).
 
-## 4. Serveur
+## 4. Serveur — en deux PR
 
-- Livrable :
-  - `packages/server/src/server.mjs` (à venir), d'après l'esquisse du README, §6.3 : Fastify 5.12.7, `@fastify/websocket` 11.3.4, `light-my-request` épinglé en 6.6.0 (`overrides`), écoute sur `127.0.0.1` ;
-  - API REST et WebSocket du README, §5.2 (`/api/projects`, `/api/conversations`, `/api/conversations/:id/timeline`, `/api/artifacts`, `/api/components`, `/api/events`, `/api/search` ; messages `prompt` et `cancel`, puis `turn.start`, `event`, `turn.end`, `turn.error`) ;
-  - instantanés des artefacts : relecture du fichier après un `write_file` ou un `replace` réussi, écrite par `rec.snapshot` ;
-  - masquage des secrets avant écriture (README, §11) ;
-  - inventaire du catalogue en lecture (README, §9.2 ; D14, D18) : Gemini CLI et Claude Code, sans rien lancer (pas de `gemini mcp list`), journalisé en `catalog.scan`.
-- Ratification : une discussion de bout en bout ; l'inventaire du poste.
-- Questions en jeu : Q7 (rétention du journal), Q8 (capture par défaut), Q11 (mode d'approbation par défaut).
-- Tests : serveur contre le faux Gemini CLI, sur le modèle des 25 contrôles de l'esquisse (README, §6.3) ; mémoire au repos mesurée.
+- Livré, PR #9 (proposée) :
+  - `packages/server/src/server.mjs` : Fastify 5.12.7, `@fastify/websocket` 11.3.4, `light-my-request` épinglé en 6.6.0 (`overrides`), écoute sur `127.0.0.1`, hôte et origine contrôlés ; `npm start` ;
+  - API REST et WebSocket du README, §5.2 ; conduite des tours (`packages/server/src/turns.mjs`) ; lectures (`packages/server/src/queries.mjs`) ;
+  - instantanés des artefacts, masquage des secrets (`packages/server/src/redact.mjs`), politiques de capture (`packages/server/src/capture.mjs`) ;
+  - projecteur en version 3 : discussion distincte de la session de Gemini CLI, actions du board projetées pendant un tour ;
+  - client en ligne de commande `geminiboard` (`packages/cli`) ;
+  - `tools/check-server.mjs`, en CI sur le vrai Gemini CLI, sans compte.
+- Ratification de la PR #9 : une discussion de bout en bout, sur le poste, avec le client (README, §6.3, tableau « Ratifier l'étape 4 »).
+- Propositions portées par la PR #9 (README, §13) : Q8 (capture par défaut), Q11 (mode d'approbation par défaut), Q21 (tours simultanés), Q22 (discussion hors projet), Q23 (accès au serveur). À sa fusion, les consigner en décisions.
+- Reste, PR suivante : inventaire du catalogue en lecture (README, §9.2 ; D14, D18) : Gemini CLI et Claude Code, sans rien lancer (pas de `gemini mcp list`), journalisé en `catalog.scan`, projeté dans `component` et `component_version`, servi par `GET /api/components` et par une commande du client. Ratification : l'inventaire du poste.
+- Question encore ouverte : Q7 (rétention du journal).
 
 ## 5. Interface
 
-- Préalable : trancher Q3 (Angular 20 ou 21 ; la 22 est exclue par D10) et Q4 (Angular CDK et composants maison).
+- Préalable : trancher Q3 (Angular 20 ou 21 ; la 22 est exclue par D10) et Q4 (Angular CDK et composants maison) ; avec l'interface, le projet « Brouillon » des questions sans dossier (Q22).
+- L'interface est cliente de l'API de l'étape 4 (README, §5.2), comme `geminiboard` : en développement, son origine (port d'Angular) s'ajoute à `allowedOrigins` dans `config.json`.
 - Livrable : `packages/ui` (à venir) : barre latérale, fil en continu, choix du mode d'approbation, panneau d'artefacts, page Catalogue en lecture (listes, fiches, usages ; README §9.6).
 - Accessibilité (O5, RGAA 4.1 et WCAG 2.2 niveau AA) : tout au clavier, focus géré entre panneaux et dialogues, flux annoncé phrase par phrase (`aria-live="polite"`), contrastes AA, thèmes clair et sombre, `prefers-reduced-motion`.
 - Ratification : parcours au clavier et au lecteur d'écran ; tests de bout en bout Playwright.

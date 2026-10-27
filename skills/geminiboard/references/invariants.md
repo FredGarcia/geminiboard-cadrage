@@ -5,7 +5,7 @@ Dix règles qui tiennent à chaque étape. Les changer demande une décision rat
 ## 1. Écrivain unique
 
 - **Règle.** Seul `board-server` écrit dans la base : le journal par `packages/server/src/recorder.mjs`, les projections par `packages/server/src/projector.mjs`. Le serveur MCP, Claude et les scripts lisent en lecture seule (`openJournal(path, { readonly: true })`, qui pose `query_only`).
-- **Raison.** SQLite n'a qu'un écrivain à la fois ; un seul processus qui écrit garde l'ordre du journal et évite les verrous. Le relais de hooks (étape 6) poste ses événements au serveur au lieu d'écrire lui-même.
+- **Raison.** SQLite n'a qu'un écrivain à la fois ; un seul processus qui écrit garde l'ordre du journal et évite les verrous. Le client `geminiboard` et l'interface passent par l'API du serveur ; le relais de hooks (étape 6) lui postera ses événements au lieu d'écrire lui-même.
 - **Écarts typiques.** Un `INSERT` ailleurs que dans ces deux modules ; un script de maintenance qui ouvre la base en écriture ; un deuxième serveur sur la même base.
 
 ## 2. Journal en ajout seul, projections reconstructibles
@@ -49,15 +49,16 @@ Dix règles qui tiennent à chaque étape. Les changer demande une décision rat
   - Codes de sortie sur 32 bits sous Windows : une erreur d'API sort avec 400, contre 144 ailleurs.
   - Fins de ligne : `.gitattributes` impose LF ; tout code qui lit un fichier du dépôt tolère CRLF.
   - Suppression de dossiers : `rmSync` avec `maxRetries` (EBUSY sous Windows).
-  - Pas de lien symbolique : il demande des droits particuliers sous Windows.
+  - Pas de lien symbolique dans le produit : il demande des droits particuliers sous Windows. Un test peut créer une jonction (`symlinkSync(cible, lien, 'junction')`), qui n'en demande pas.
+  - Dossier saisi ramené à sa forme canonique (`realpathSync.native`) : un nom court (`JEANDU~1`) ou un lien désignent le même dossier que sa forme longue.
 - **Contrôle.** CI sous Ubuntu et sous Windows (`.github/workflows/tests.yml`, `.github/workflows/gemini-cli.yml`).
 - **Écarts typiques.** `path.join` sur un chemin venu de l'autre système ; un test qui suppose `/tmp` ; un `\n` attendu en dur dans une sortie de Gemini CLI sous Windows ; un test sauté sous Windows sans dire pourquoi.
 
 ## 7. Aucun identifiant
 
-- **Règle.** Le board ne détient, ne lit et ne journalise aucun identifiant : la connexion et les clés restent celles de Gemini CLI (`.gemini`, variables d'environnement). Les serveurs MCP reçoivent leurs secrets par des références `$VAR` ou `${VAR}`, résolues par Gemini CLI dans son environnement. Le serveur n'écoute que sur `127.0.0.1`.
-- **Mise en œuvre.** `NO_BROWSER=true`, pour qu'un Gemini CLI non connecté sorte avec le code 41 au lieu de lire le prompt comme une réponse ; masquage des secrets avant écriture, prévu au README, §11 (colonne `event.redacted`).
-- **Contrôle.** Revue ; `verifier.mjs` cherche clés et jetons dans les lignes ajoutées.
+- **Règle.** Le board ne détient, ne lit et ne journalise aucun identifiant : la connexion et les clés restent celles de Gemini CLI (`.gemini`, variables d'environnement). Les serveurs MCP reçoivent leurs secrets par des références `$VAR` ou `${VAR}`, résolues par Gemini CLI dans son environnement. Le serveur n'écoute que sur `127.0.0.1` et refuse un hôte ou une origine étrangers, WebSocket compris.
+- **Mise en œuvre.** `NO_BROWSER=true`, pour qu'un Gemini CLI non connecté sorte avec le code 41 au lieu de lire le prompt comme une réponse ; secrets masqués avant écriture et dans le flux relayé (`packages/server/src/redact.mjs`, colonne `event.redacted`), Gemini CLI recevant le prompt intact ; politique de capture du projet (`full`, `metadata`, `off`) appliquée avant écriture (`packages/server/src/capture.mjs`).
+- **Contrôle.** Tests du serveur (masquage, capture, hôte et origine) et `tools/check-server.mjs` sur le vrai Gemini CLI ; revue ; `verifier.mjs` cherche clés et jetons dans les lignes ajoutées.
 - **Écarts typiques.** Lire `oauth_creds.json` « pour vérifier la connexion » ; une clé en clair dans un manifeste d'extension ou dans un test.
 
 ## 8. Ni dépôt d'un projet, ni fichiers internes de Gemini CLI

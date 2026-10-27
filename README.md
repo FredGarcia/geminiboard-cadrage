@@ -1,6 +1,6 @@
 # GeminiBoard : cadrage
 
-> **Statut** : v0.2 ratifiée le 25 octobre 2026 (PR #2) · étape 1 : spike fusionné (PR #3), corpus à collecter · étape 2 : migration, journal et projecteur fusionnés (PR #4), mémoire et Windows natif (PR #5), Windows ou WSL2 au choix et CI (PR #6), gestion des composants conçue (PR #7), ajustement au corpus réel à venir · étape 3 : skill de construction `geminiboard` 1.0.0 proposée (PR #8)
+> **Statut** : v0.2 ratifiée le 25 octobre 2026 (PR #2) · étape 1 : spike fusionné (PR #3), corpus à collecter · étape 2 : migration, journal et projecteur fusionnés (PR #4), mémoire et Windows natif (PR #5), Windows ou WSL2 au choix et CI (PR #6), gestion des composants conçue (PR #7), ajustement au corpus réel à venir · étape 3 : skill de construction `geminiboard` ratifiée (PR #8) · étape 4 : serveur et client en ligne de commande proposés (PR #9), inventaire du catalogue à suivre
 >
 > **Portée de ce dépôt** : le cadrage, le code du board (D11) et les composants portables (D12).
 
@@ -40,6 +40,7 @@ GeminiBoard comble ce manque et prépare la transition : son journal devient la 
 | D16 | Le board n'écrit pas les fichiers internes de Gemini CLI : activation par `gemini extensions enable` et `disable` ; un agent du dépôt d'un projet se reconnaît dans un terminal ou s'adopte dans l'extension du projet (Q18) | 2026-10-26 |
 | D17 | Seules les versions ratifiées s'activent dans un projet ; un brouillon s'essaie dans un projet de bac à sable (Q19) | 2026-10-26 |
 | D18 | Inventaire de Claude Code dès l'étape 4, en lecture seule (Q20) | 2026-10-26 |
+| D19 | `AGENTS.md`, source unique du contexte : Gemini CLI le charge comme fichier de contexte de l'extension du dépôt (`contextFileName`), sans toucher aux réglages de l'utilisateur ; Claude Code le lit de lui-même (Q10) | 2026-10-27 |
 
 Le front visé (flux en continu, panneaux, catalogue) est complexe : ce cadrage retient donc Angular au titre de D3. D10 limite Angular aux versions 20 et 21 (Q3).
 
@@ -64,19 +65,20 @@ Hors périmètre de la v1 : réimplémenter l'agent (le board pilote Gemini CLI,
 | Artefacts | détection des fichiers écrits par les outils (`write_file`, `replace`), épinglage d'un bloc de code, versions, différences entre versions, export |
 | Catalogue | skills, sous-agents, commandes, outils et serveurs MCP, hooks, politiques, fichiers de contexte, extensions : inventaire sur disque (Gemini CLI et Claude Code), versions, statut (brouillon, proposé, ratifié, obsolète), lien vers la PR, adoption, activation par projet par une extension de projet, usages, export vers Claude (§9) |
 | Exécutions | lancer une commande ou un agent en lot, suivre le statut et le code de sortie |
-| Journal | événements bruts filtrables (source, type, session), rejeu, export |
+| Journal | événements bruts filtrables (source, type, session, discussion), rejeu, export |
 | Réglages | moteurs détectés et leurs versions, chemins, secret HMAC, motifs de masquage |
 
 ## 5. Architecture
 
 ### 5.1 Vue d'ensemble
 
-Les liens en pointillés arrivent aux étapes 6 et 8 de la feuille de route.
+Les liens en pointillés arrivent aux étapes 5, 6 et 8 de la feuille de route.
 
 ```mermaid
 flowchart LR
-  subgraph poste["Poste local (WSL2, Node.js 20)"]
-    UI["Interface Angular<br/>au style de Claude"]
+  subgraph poste["Poste local (Windows ou WSL2, Node.js 20)"]
+    UI["Interface Angular<br/>au style de Claude<br/>étape 5"]
+    CLI["geminiboard<br/>client en ligne de commande"]
     SRV["board-server<br/>Fastify + WebSocket<br/>écrivain unique"]
     DB[("geminiboard.db<br/>SQLite, WAL")]
     G1["gemini --output-format stream-json<br/>un processus par prompt"]
@@ -87,9 +89,9 @@ flowchart LR
     FS["~/.gemini/tmp/.../chats<br/>étape 6"]
     C1["claude-agent-acp<br/>étape 8, Node.js 22"]
   end
-  UI <-->|"HTTP + WebSocket"| SRV
-  SRV -->|"stdin : prompt"| G1
-  G1 -->|"stdout : JSONL"| SRV
+  UI <-.->|"HTTP + WebSocket"| SRV
+  CLI <-->|"HTTP + WebSocket"| SRV
+  SRV <-->|"stdin : prompt<br/>stdout : JSONL"| G1
   SRV --> DB
   MCP -->|"mode=ro"| DB
   CL --> MCP
@@ -99,7 +101,7 @@ flowchart LR
   SRV -.->|"ACP"| C1
 ```
 
-- **Écrivain unique.** Seul `board-server` écrit dans la base, sur le modèle de l'agent médiateur d'Agent2Dev. Le relais de hooks lui transmettra ses événements ; le serveur MCP lit en lecture seule.
+- **Écrivain unique.** Seul `board-server` écrit dans la base, sur le modèle de l'agent médiateur d'Agent2Dev. Le client `geminiboard` et l'interface passent par son API ; le relais de hooks lui transmettra ses événements ; le serveur MCP lit en lecture seule.
 - **Journal d'abord.** Tout ce qui arrive (ligne JSONL, entrée de hook, action dans l'interface) est écrit tel quel dans `event`, puis projeté dans les tables métier. Un arrêt brutal ne perd rien : le rejeu reconstitue les messages à partir de leurs fragments.
 - **Adaptateurs de moteur.** Un adaptateur par moteur et par canal : `gemini-cli` en headless pour la v1, puis ACP et `claude-code` à l'étape 8. Le reste du board ignore le moteur, ce qui prépare le passage à Claude.
 - **Local.** Tout tourne sur le poste, sous Windows natif ou sous WSL2 au choix (D13, §5.4) ; le navigateur accède au board par `localhost`.
@@ -108,11 +110,11 @@ flowchart LR
 
 | Paquet | Rôle | Technologie |
 |---|---|---|
-| `packages/server` (`board-server`) | lanceur de Gemini CLI (`run-gemini.mjs`), base et migrations (`journal.mjs`), écriture du journal (`recorder.mjs`), projecteur (`projector.mjs`) ; API HTTP et WebSocket à l'étape 4 | Node.js 20 (ES modules), better-sqlite3 ; Fastify et `@fastify/websocket` à l'étape 4 |
-| `packages/ui` (`board-ui`) | interface | Angular, Angular CDK |
-| `packages/hook` (`geminiboard-hook`) | relais des hooks de Gemini CLI (et de Claude Code) vers le serveur | script Node autonome, sans dépendance |
-| `packages/mcp` (`geminiboard-mcp`) | lecture de la base par Claude ou Gemini | serveur MCP stdio, Node.js |
-| `packages/cli` (`geminiboard`) | migrations, import, rejeu, export Markdown, génération des variantes Claude | Node.js |
+| `packages/server` (`board-server`) | API HTTP et WebSocket (`server.mjs`), conduite des tours (`turns.mjs`), lectures de l'API (`queries.mjs`), masquage des secrets (`redact.mjs`), politiques de capture (`capture.mjs`), lanceur de Gemini CLI (`run-gemini.mjs`), base et migrations (`journal.mjs`), écriture du journal (`recorder.mjs`), projecteur (`projector.mjs`) | Node.js 20 (ES modules), better-sqlite3, Fastify et `@fastify/websocket` |
+| `packages/cli` (`geminiboard`) | client en ligne de commande du serveur (étape 4) ; plus tard, import, rejeu, export Markdown, génération des variantes Claude | Node.js, `ws` |
+| `packages/ui` (`board-ui`) | interface (étape 5) | Angular, Angular CDK |
+| `packages/hook` (`geminiboard-hook`) | relais des hooks de Gemini CLI (et de Claude Code) vers le serveur (étape 6) | script Node autonome, sans dépendance |
+| `packages/mcp` (`geminiboard-mcp`) | lecture de la base par Claude ou Gemini (étape 7) | serveur MCP stdio, Node.js |
 
 Versions compatibles avec Node.js 20 (D10), vérifiées le 25 octobre 2026 :
 
@@ -121,15 +123,32 @@ Versions compatibles avec Node.js 20 (D10), vérifiées le 25 octobre 2026 :
 | Gemini CLI (`@google/gemini-cli`) | 0.65.0, lancé par le board avec `node` et son point d'entrée `bundle/gemini.js` | 20 et plus ; exécuté ici sous Node.js 20.20.2 |
 | better-sqlite3 | 12.9.0 | dernière version livrée avec des binaires précompilés pour Node.js 20 (Windows x64 et arm64, Linux x64) ; à partir de la 12.10, npm la compile à l'installation (outils C++ requis) ; la 13 exige Node.js 22 |
 | Fastify / `@fastify/websocket` | 5.12.7 / 11.3.4 | testés ici sous Node.js 20.20.2, avec `light-my-request` épinglé en 6.6.0 (`overrides`) : sa version 6.8.0, tirée par défaut, dépend de `cookie` 2, qui exige Node.js 22 |
+| `ws` | 8.22.0 | client WebSocket du CLI et des tests ; Node.js 10 et plus (Node.js 20 n'a pas de client WebSocket stable) |
 | Angular | 20.x ou 21.x | `^20.19.0` ; la 22 exige Node.js 22.22.3 ou plus |
 | `node:sqlite` | écarté | absent de Node.js 20 |
 | `@agentclientprotocol/claude-agent-acp` | étape 8 | exige Node.js 22 |
 
-Contrats du serveur (esquisse, précisés à l'étape 4) :
+Contrats du serveur (étape 4, `packages/server/src/server.mjs`). Réponses en JSON ; une erreur porte `{ error: { code, message } }`, avec un message en français ; un champ inconnu est refusé (400), et non ignoré.
 
-- REST : `/api/projects`, `/api/conversations`, `/api/conversations/:id/timeline`, `/api/artifacts`, `/api/components`, `/api/events`, `/api/search`.
-- WebSocket `/ws` : reçoit `prompt` et `cancel` ; émet `turn.start`, `event`, `turn.end`, `turn.error` (implémentation de référence au §6.3).
-- Ingestion (étape 6) : `POST /ingest/hook`, signé par HMAC-SHA256 (en-tête `X-GeminiBoard-Signature`).
+| Route | Rôle |
+|---|---|
+| `GET /api/health` | Gemini CLI détecté et sa version, tours en cours et limite, schéma, nombres d'événements, de projets, de discussions et d'artefacts |
+| `GET /api/projects` ; `POST /api/projects` ; `GET`, `PATCH /api/projects/:id` | projets : nom, dossier racine (absolu, existant, ni racine de lecteur ; non modifiable ensuite), instructions, politique de capture, approbation du dossier (`trusted`) ; chaque écriture est un événement `project.upsert` |
+| `GET /api/conversations?project=&before=&limit=` ; `GET`, `DELETE /api/conversations/:id` | discussions, de la plus récente à la plus ancienne ; une discussion porte ses tours ; suppression refusée pendant un tour (409) |
+| `GET /api/conversations/:id/timeline` | fil : messages et appels d'outils, dans l'ordre de leur séquence partagée |
+| `GET /api/artifacts?project=&conversation=` ; `GET /api/artifacts/:id` ; `GET /api/artifacts/:id/versions/:version` | artefacts, leurs versions, le contenu d'une version |
+| `GET /api/components` | catalogue (rempli par l'inventaire, PR suivante de l'étape 4) |
+| `GET /api/events?after=&limit=&source=&type=&session=&conversation=` | journal brut, paginé par identifiant ; `session` : session de Gemini CLI ; `conversation` : discussion, pour les tours projetés |
+| `GET /api/search?q=&project=` | recherche plein texte, sans accents, dans les messages, les artefacts et les connaissances ; les opérateurs FTS5 tapés restent du texte |
+
+WebSocket `/ws` :
+
+| Sens | Message |
+|---|---|
+| reçu | `{ type: 'prompt', requestId?, projectId (nouvelle discussion) ou conversationId, text, approvalMode?, model? }` ; `{ type: 'cancel', conversationId? }` (tours lancés par ce client) |
+| émis | `turn.start` (discussion, projet, exécution, session de Gemini CLI, reprise, capture), puis les `event` du tour (secrets masqués), puis `turn.end` (statut projeté, code de sortie, erreur, jetons, durée) ; ou `turn.error` (code stable : `invalid`, `untrusted`, `busy`, `limit`, `unknown_project`, `unknown_conversation`, `no_gemini`, `missing_dir`, `spawn`, `journal`), le tour n'ayant pas eu lieu |
+
+Un client parti (onglet fermé) arrête ses tours en cours, et l'arrêt est journalisé (`turn.cancel`). Ingestion (étape 6) : `POST /ingest/hook`, signé par HMAC-SHA256 (en-tête `X-GeminiBoard-Signature`).
 
 Stockage local :
 
@@ -139,8 +158,10 @@ Stockage local :
 ├── blobs/              binaires adressés par sha256 (images, pièces jointes)
 ├── spool/              événements de hooks en attente si le serveur est arrêté
 ├── secret              clé HMAC (droits 600)
-└── config.json
+└── config.json         réglages du serveur, facultatifs
 ```
+
+`config.json` (étape 4) : `port` (3210), `maxConcurrentTurns` (1, jusqu'à 8), `allowedOrigins` (origines admises en plus de celles du board, pour l'interface en développement), `redactionPatterns` (motifs de secrets en plus des motifs intégrés), `maxHeapMb` (plafond du tas de Gemini CLI), `geminiEntry` (chemin de `gemini.js`). Variables : `GEMINIBOARD_HOME` (dossier du board), `GEMINIBOARD_DB` (base), `GEMINIBOARD_PORT`, `GEMINI_CLI_ENTRY`. Le serveur n'écoute que sur `127.0.0.1`, quel que soit le réglage.
 
 ### 5.3 Interface au style de Claude
 
@@ -167,7 +188,7 @@ Mesures du 25 octobre 2026, sous Linux avec Node.js 20.20.2 et Gemini CLI 0.65.0
 | Gemini CLI par défaut : il se relance dans un second processus Node.js, avec un tas de 50 % de la RAM | 461 à 465 Mo | 3,9 à 4,8 s |
 | Board : `node` et `gemini.js`, relance désactivée (`GEMINI_CLI_NO_RELAUNCH`) | 267 à 283 Mo | 2,5 à 3,3 s |
 | Board, tas plafonné à 512 Mo (`maxHeapMb`) | 273 à 275 Mo | — |
-| `board-server` (esquisse du §6.3, faux Gemini CLI) | 78 Mo au repos, 81 Mo après 20 tours | — |
+| `board-server` (étape 4, processus seul, faux Gemini CLI ; mesure du 27 octobre 2026, trois exécutions) | 81 à 82 Mo au repos, 85 Mo après 20 tours | — |
 
 Sous Windows (GitHub Actions, Windows Server, même lancement que le board, trois exécutions) : 192 à 222 Mo par tour, pour le processus seul (`tasklist`), et 2,3 à 3,9 s par tour.
 
@@ -192,7 +213,8 @@ Le code et ses tests tournent sur les deux plateformes :
 - **Spike** : masquage des formes Windows des chemins (barres inverses ou obliques, échappement JSON, noms courts comme `JEANDU~1`, casse), du nom d'utilisateur et du dossier d'installation de Gemini CLI ; mémoire mesurée par `tasklist`.
 - **Fins de ligne** : `.gitattributes` impose LF, y compris dans un dépôt extrait sous Windows ; l'empreinte des migrations ignore CRLF.
 - **Tests** : le faux Gemini CLI est lancé comme `gemini.js`, sans shell ; seul le test du raccourci `gemini` (mode `bin`) est sauté sous Windows.
-- **CI** (GitHub Actions, à chaque push) : la suite de tests sous Ubuntu et sous Windows, avec Node.js 20 et 22, et un contrôle que better-sqlite3 s'installe sans compilation (`.github/workflows/tests.yml`) ; le vrai Gemini CLI, lancé par le spike avec une clé invalide, puis le spike S5 du catalogue (§9.4) et le contrôle de l'extension du dépôt (§9.7), sous Ubuntu et sous Windows, chaque lundi et à chaque changement du lanceur, du spike ou des composants (`.github/workflows/gemini-cli.yml`).
+- **CI** (GitHub Actions, à chaque push) : la suite de tests sous Ubuntu et sous Windows, avec Node.js 20 et 22, et un contrôle que better-sqlite3 s'installe sans compilation (`.github/workflows/tests.yml`) ; le vrai Gemini CLI, lancé par le spike avec une clé invalide, puis le spike S5 du catalogue (§9.4), le contrôle de l'extension du dépôt (§9.7) et celui du serveur (§6.3), sous Ubuntu et sous Windows, chaque lundi et à chaque changement du serveur, du client, du spike ou des composants (`.github/workflows/gemini-cli.yml`).
+- **Noms courts** : un dossier peut s'écrire sous un nom court de Windows (`C:\Users\JEANDU~1\…`) ou par un lien ; le serveur range la racine d'un projet sous sa forme canonique (`realpath`), et le client la compare au dossier courant sous la même forme.
 
 Conséquence pour les skills : leurs scripts s'écrivent en Node.js, qui tourne à l'identique sous bash et sous PowerShell, plutôt qu'en bash. C'est le cas de ceux de la skill `geminiboard` (étape 3), que les commandes `/board:*` lancent par le shell de Gemini CLI, PowerShell sous Windows.
 
@@ -207,7 +229,7 @@ Le board n'a ni compte, ni clé, ni certification à lui : il lance le Gemini CL
 | Node.js 20 | installeur Windows de Node.js | nvm, ou paquet de la distribution |
 | Gemini CLI | `npm install -g @google/gemini-cli` | la même commande, dans la distribution |
 | Connexion de Gemini CLI | une fois, dans un terminal (tableau suivant) | la même chose, dans la distribution : la connexion faite sous Windows n'y sert pas |
-| Board | `git clone`, `npm install`, `npm test` | les mêmes commandes |
+| Board | `git clone`, `npm install`, `npm test`, puis `npm start` (serveur, §6.3) | les mêmes commandes |
 | Base | `%USERPROFILE%\.geminiboard\geminiboard.db` | `~/.geminiboard/geminiboard.db` |
 
 Chaque environnement a sa configuration Gemini CLI (`.gemini` : réglages, connexion, sessions) et sa base (`.geminiboard`). Une même base ne s'ouvre pas depuis les deux : le mode WAL de SQLite ne fonctionne pas sur un système de fichiers réseau, ce qu'est `/mnt/c` vu de WSL2.
@@ -227,28 +249,29 @@ Connexion de Gemini CLI, depuis le 18 juin 2026 (§1) :
 
 ### 6.1 Principe retenu (D9)
 
-Pour chaque prompt, le board lance un processus Gemini CLI en mode headless et relaie sa sortie standard vers l'interface. La sortie est demandée au format `stream-json` : une ligne JSON par événement, que le board journalise avant de la relayer. La discussion garde sa mémoire d'un prompt à l'autre : le board choisit l'identifiant de session (`--session-id <uuid>` au premier tour), puis reprend la même session (`--resume <uuid>`).
+Pour chaque prompt, le board lance un processus Gemini CLI en mode headless et relaie sa sortie standard vers l'interface. La sortie est demandée au format `stream-json` : une ligne JSON par événement, que le board journalise avant de la relayer. La discussion garde sa mémoire d'un prompt à l'autre : le board ouvre une session de Gemini CLI au premier tour (`--session-id <uuid>`), puis la reprend (`--resume <uuid>`) ; si ce premier tour échoue, la discussion ouvre une nouvelle session au tour suivant (§6.2).
 
 ```mermaid
 sequenceDiagram
   autonumber
-  participant U as Interface
+  participant U as Interface ou client
   participant S as board-server
   participant G as gemini (headless)
   participant D as SQLite
   U->>S: prompt (WebSocket)
   S->>G: lance gemini --session-id ou --resume, prompt sur stdin
-  S->>D: engine_run, event out "prompt"
+  S->>D: engine_run, event out "prompt" (secrets masqués)
   S-->>U: turn.start
   G-->>S: init, message user (JSONL)
-  S->>D: event in (brut)
-  S-->>U: événements
+  S->>D: event in (secrets masqués, selon la capture)
+  S-->>U: événements (secrets masqués)
   G-->>S: message assistant (delta), tool_use, tool_result
-  S->>D: event in (brut)
+  S->>D: event in, instantané des fichiers écrits
   S-->>U: événements
   G-->>S: result (statistiques), puis fin du processus
   S->>D: engine_run clos (code de sortie, stderr)
-  S-->>U: turn.end
+  S->>D: projection du tour (discussion, messages, outils, artefacts)
+  S-->>U: turn.end (statut projeté)
 ```
 
 Corrections apportées à l'exemple proposé, vérifiées sur Gemini CLI 0.65.0 :
@@ -270,7 +293,8 @@ Corrections apportées à l'exemple proposé, vérifiées sur Gemini CLI 0.65.0 
 - **Autorisations.** Personne ne peut confirmer un outil en cours de tour : le moteur de politiques transforme toute demande de confirmation en refus. Le mode d'approbation se choisit donc avant l'envoi : `default` (les outils à confirmer, comme l'écriture de fichiers ou le shell, sont refusés), `auto_edit` (modifications de fichiers acceptées), `yolo` (tout est accepté), `plan` (lecture seule). Des règles de politique (`policies/*.toml`) peuvent autoriser des commandes précises ; `--policy` remplace le dossier `~/.gemini/policies` de l'utilisateur, que le lanceur repasse donc en premier (§9.1).
 - **Authentification.** Le mode headless réutilise la connexion en cache ou la clé d'API ; il ne sait pas se connecter seul. Le board passe `NO_BROWSER=true`, pour qu'un Gemini CLI non connecté sorte avec le code 41 au lieu de lire le prompt comme une réponse (§5.5).
 - **Dossier approuvé.** Dans un dossier non approuvé, le mode headless s'arrête avec le code 55. Le board ne passe `--skip-trust` que pour un projet dont l'humain a approuvé le dossier (`project.trusted`), et journalise cette décision.
-- **Création de la session.** Gemini CLI n'enregistre une session qu'après un tour abouti. Si le premier tour échoue (erreur d'API, par exemple), `--resume` sort ensuite avec le code 42 (« No previous sessions found for this project »). Le board ne reprend donc une session qu'après un `result` en succès ; sinon, il la recrée avec `--session-id`.
+- **Sessions.** Gemini CLI écrit le fichier d'une session dès son premier tour, même si ce tour échoue, mais ne la reprend qu'après une réponse du modèle. Après un premier tour en erreur (erreur d'API, par exemple), la session ne se reprend pas (`--resume` sort avec 42 : « No previous sessions found for this project ») et ne se recrée pas (`--session-id` du même identifiant sort avec 42 : « Session ID … already exists »). Une discussion du board reprend donc sa dernière session qui a abouti ; sinon, elle en ouvre une nouvelle : discussion et session sont deux identifiants distincts, et `conversation.engine_session_id` suit la session en cours. Constaté sur Gemini CLI 0.65.0 le 27 octobre 2026, par `tools/check-server.mjs` ; la règle de la version précédente du cadrage (recréer la session ratée) ne tenait que contre le faux Gemini CLI.
+- **Identifiants de session.** Le fichier d'une session porte la minute de sa création et les 8 premiers caractères de son identifiant. Deux UUIDv7 de la même minute partagent ces caractères : la seconde session écrasait le fichier de la première (constaté sur Gemini CLI 0.65.0). Le board et le spike passent donc des UUID aléatoires (version 4) ; les UUIDv7 restent réservés aux entités du board.
 - **Relance.** Par défaut, Gemini CLI se relance dans un second processus Node.js avec un tas de 50 % de la RAM. En headless, cette relance ne sert qu'à agrandir le tas : le board la désactive (`GEMINI_CLI_NO_RELAUNCH`, §5.4).
 - **Shell.** Les commandes de `run_shell_command` passent par bash sous Linux et WSL2, par PowerShell sous Windows (`pwsh.exe`, sinon `powershell.exe`). Une règle de politique (`commandPrefix`) vise la commande telle que le modèle l'écrit : `ls` fonctionne dans les deux cas (alias de `Get-ChildItem` dans PowerShell) ; `grep`, absent de Windows par défaut, non.
 - **Codes de sortie.** 0 (succès), 1 (erreur générale), 41 (authentification), 42 (entrée invalide), 52 (configuration), 53 (limite de tours), 55 (dossier non approuvé), 130 (annulation). Une erreur d'API sort avec le statut HTTP : 400 sous Windows, où les codes de sortie tiennent sur 32 bits, et 144 ailleurs (400 modulo 256). Seul l'événement `result` fait foi.
@@ -285,124 +309,40 @@ Corrections apportées à l'exemple proposé, vérifiées sur Gemini CLI 0.65.0 
 | `error` | `severity` (`warning`, `error`), `message` |
 | `result` | `status` (`success`, `error`), `error`, `stats` (`total_tokens`, `input_tokens`, `output_tokens`, `cached`, `input`, `duration_ms`, `tool_calls`, `models`) |
 
-### 6.3 Implémentation de référence (Node.js 20)
+### 6.3 Serveur du board (Node.js 20)
 
-Le lanceur [`packages/server/src/run-gemini.mjs`](packages/server/src/run-gemini.mjs) lance un tour. L'esquisse `server.mjs` ci-dessous s'appuie sur les modules de `packages/server/src` (journal, enregistreur, projecteur, lanceur) : elle expose le lanceur en WebSocket, journalise chaque événement, puis projette le tour clos ; elle entrera dans `packages/server` à l'étape 4.
+Le serveur, [`packages/server/src/server.mjs`](packages/server/src/server.mjs), expose l'API du §5.2 ; la conduite des tours est dans [`packages/server/src/turns.mjs`](packages/server/src/turns.mjs), le lancement d'un processus dans [`packages/server/src/run-gemini.mjs`](packages/server/src/run-gemini.mjs). Pour un prompt :
+
+1. Discussion et projet retrouvés : une nouvelle discussion naît dans un projet ; une discussion existante garde son projet et son dossier.
+2. Refus sans rien lancer, avec un code stable : dossier non approuvé, discussion inconnue ou supprimée, tour déjà en cours dans la discussion, limite de tours simultanés atteinte (un par défaut : la mémoire du poste est comptée, §5.4), prompt vide ou de plus de 8 Mo, mode d'approbation inconnu, Gemini CLI introuvable.
+3. Session de Gemini CLI : la dernière de la discussion qui a abouti, reprise ; sinon une nouvelle, à UUID aléatoire (§6.2).
+4. Lancement (`node` et `gemini.js`, sans shell, `--skip-trust` pour le dossier approuvé), journal du prompt (masqué) avant le premier événement, puis de chaque événement, selon la politique de capture du projet : `full`, `metadata` (la forme sans le contenu) ou `off` (rien en base ; la discussion ne vit que le temps du serveur).
+5. Relais de chaque événement au client, secrets masqués comme dans le journal ; instantané de chaque fichier écrit par `write_file` ou `replace` (relu sur le disque, 1 Mo au plus, texte seulement), qui fait foi pour l'artefact.
+6. Fin du processus : exécution close, tour projeté, puis `turn.end` avec le statut projeté.
 
 Le texte saisi suit ce chemin : interface, WebSocket, `board-server`, puis entrée standard de Gemini CLI. Le board l'y écrit dès le lancement et la referme aussitôt (`child.stdin.end(prompt)`) : Gemini CLI lit l'entrée jusqu'à sa fin (8 Mo au plus) et la tient pour vide si rien n'arrive dans les 500 ms. La réponse revient sur la sortie standard, une ligne JSON par événement. Le prompt ne passe jamais par la ligne de commande : il n'apparaît ni dans `ps`, ni dans `engine_run.argv_json`. L'entrée standard ne sert qu'une fois par processus : le prompt suivant lance un nouveau processus, en `--resume`.
 
 Vérifications du 25 octobre 2026 :
 
 - Lanceur et spike : 21 tests contre un faux Gemini CLI lancé comme `gemini.js` (sans shell), sous Linux et sous Windows, avec Node.js 20 et 22 (ordre des événements, ligne JSON coupée en deux écritures, prompt piégé transmis intact, `--session-id` puis `--resume`, politiques, relance désactivée et plafond du tas, connexion absente sans question sur stdin, dossier des politiques de l'utilisateur conservé, codes 41, 42, 55, 130 et 144, binaire absent, point d'entrée relatif, paramètres refusés, masquage des chemins sous leurs formes Windows, mesure de la mémoire).
-- Esquisse de serveur : 25 contrôles sous Node.js 20.20.2 (WebSocket de bout en bout, journal et projections, bouton Arrêter et onglet fermé consignés par `turn.cancel`, règle de reprise après un premier tour en erreur, reprise après un arrêt brutal, relance désactivée et plafond du tas).
-- Contre Gemini CLI 0.65.0 réel : sans authentification, sortie 41 ; dans un dossier non approuvé, sortie 55 ; avec `--skip-trust` et une clé invalide, `init` (avec l'UUIDv7 fourni par le board), `message` (prompt intact), `result` en erreur, sortie 144 ; le tour suivant en `--resume` sort avec 42. Lancé comme le board (`node` et `gemini.js`, sans relance) : 267 à 283 Mo par tour.
+- Contre Gemini CLI 0.65.0 réel : sans authentification, sortie 41 ; dans un dossier non approuvé, sortie 55 ; avec `--skip-trust` et une clé invalide, `init` (avec l'identifiant de session fourni par le board), `message` (prompt intact), `result` en erreur, sortie 144 ; le tour suivant en `--resume` sort avec 42. Lancé comme le board (`node` et `gemini.js`, sans relance) : 267 à 283 Mo par tour.
 - En CI (GitHub Actions), le spike contre Gemini CLI 0.65.0 réel avec une clé invalide : sous Ubuntu, sortie 144 et 230 à 262 Mo par tour ; sous Windows, sortie 400 et 192 à 222 Mo par tour (processus seul), sur trois exécutions ; ni chemin local ni nom d'utilisateur dans la sortie.
 
-<details>
-<summary><strong><code>server.mjs</code> (esquisse) : cliquer pour déplier</strong></summary>
+Vérifications du 27 octobre 2026 (étape 4) :
 
-```js
-// server.mjs : esquisse du board-server. Une route WebSocket pilote Gemini CLI : chaque événement
-// est journalisé dans SQLite et relayé à l'interface, puis le tour est projeté une fois clos.
-// Node.js 20 ou plus : fastify 5, @fastify/websocket 11, better-sqlite3 12.9 ; Linux, WSL2 et Windows natif.
-import Fastify from 'fastify';
-import websocket from '@fastify/websocket';
-import { homedir } from 'node:os';
-import { join } from 'node:path';
-import { pathToFileURL } from 'node:url';
-import { openJournal } from './journal.mjs';
-import { createProjector } from './projector.mjs';
-import { createRecorder } from './recorder.mjs';
-import { resolveGeminiEntry, runGemini } from './run-gemini.mjs';
-import { uuidv7 } from './uuidv7.mjs';
+- Serveur : 14 tests contre le faux Gemini CLI, qui tient désormais ses sessions comme la 0.65 (API et erreurs, contrôle de l'hôte et de l'origine, tour de bout en bout, refus sans rien lancer, annulation demandée ou au départ du client, nouvelle session après un premier tour en erreur, instantanés, masquage, politiques de capture, recherche, journal paginé, suppression, démarrage sans Gemini CLI, arrêt du serveur et arrêt brutal).
+- Client en ligne de commande : 4 tests, dont un processus réel qui lit son prompt sur l'entrée standard.
+- Contre Gemini CLI 0.65.0 réel, sans compte (`tools/check-server.mjs`, en CI sous Ubuntu et sous Windows) : discussion de bout en bout jusqu'à l'erreur d'API, journal et projection, secret masqué dans le flux et dans la base, version de Gemini CLI journalisée, nouvelle session au second tour, annulation, client `geminiboard` en processus réel.
 
-// entry : gemini.js, lancé avec le node du board (sans shell, sans cmd.exe sous Windows)
-// trusted : dossier approuvé par l'humain ; dans le board, lu dans project.trusted
-export async function buildServer({ dbPath, entry = resolveGeminiEntry(), cwd = process.cwd(), trusted = false, maxHeapMb }) {
-  if (!entry) throw new Error('Gemini CLI introuvable : « npm install -g @google/gemini-cli », ou définir GEMINI_CLI_ENTRY');
-  const db = openJournal(dbPath); // migrations appliquées à l'ouverture
-  const rec = createRecorder(db);
-  const proj = createProjector(db);
-  rec.recoverOpenRuns(); // tours restés ouverts après un arrêt brutal
-  proj.projectPending();
-  // Gemini CLI n'enregistre une session qu'après un tour abouti : sinon, --resume sort avec 42
-  const sessionStarted = db.prepare(`SELECT 1 FROM event
-    WHERE engine_session_id = ? AND source = 'headless' AND type = 'result'
-      AND json_extract(payload_json, '$.status') = 'success' LIMIT 1`);
+Ratifier l'étape 4 sur le poste, avec la connexion de travail, dans deux terminaux ouverts à la racine du clone (PowerShell ou bash, une commande par ligne). Ailleurs, `npx geminiboard` chercherait un paquet de ce nom sur le registre npm : hors du clone, la commande est `node <clone>/packages/cli/src/geminiboard.mjs`.
 
-  const app = Fastify({ logger: false });
-  await app.register(websocket);
-  app.addHook('onClose', async () => db.close());
-
-  // Reçus : { type: 'prompt', conversationId?, text, approvalMode?, model? } | { type: 'cancel' }
-  // Émis  : turn.start, event, turn.end, turn.error
-  app.get('/ws', { websocket: true }, (socket) => {
-    let current = null;
-    const send = (msg) => socket.send(JSON.stringify(msg));
-    const cancel = () => {
-      if (!current) return;
-      rec.cancel({ runId: current.runId, sessionId: current.sessionId }); // fait foi, même sans code 130 (Windows)
-      current.handle.cancel();
-    };
-
-    socket.on('message', async (raw) => {
-      let msg;
-      try { msg = JSON.parse(raw.toString()); } catch { return send({ type: 'turn.error', message: 'JSON invalide' }); }
-      if (msg.type === 'cancel') return cancel();
-      if (msg.type !== 'prompt' || typeof msg.text !== 'string') return;
-      if (current) return send({ type: 'turn.error', message: 'un tour est déjà en cours' });
-
-      const sessionId = msg.conversationId ?? uuidv7();
-      const resume = Boolean(sessionStarted.get(sessionId));
-      const runId = uuidv7();
-      const approvalMode = msg.approvalMode ?? 'default';
-      let handle;
-      try {
-        // Le texte saisi est écrit sur l'entrée standard de Gemini CLI, jamais sur sa ligne de commande
-        handle = runGemini({
-          prompt: msg.text, cwd, sessionId, resume, approvalMode, model: msg.model, skipTrust: trusted, entry, maxHeapMb,
-          onEvent: (event) => {
-            rec.event({ runId, sessionId, event });
-            send({ type: 'event', conversationId: sessionId, event });
-          },
-        });
-      } catch (e) {
-        return send({ type: 'turn.error', conversationId: sessionId, message: e.message });
-      }
-      current = { handle, runId, sessionId };
-      // Synchrone, donc écrit avant le premier événement reçu
-      rec.start({ runId, sessionId, cwd, args: handle.args, pid: handle.pid ?? null, prompt: msg.text, approvalMode, resume });
-      send({ type: 'turn.start', conversationId: sessionId, resume });
-
-      try {
-        const r = await handle.done;
-        rec.end({ runId, code: r.code, stderr: r.stderr });
-        send({ type: 'turn.end', conversationId: sessionId, code: r.code, meaning: r.meaning });
-      } catch (e) {
-        rec.end({ runId, code: null, stderr: e.message });
-        send({ type: 'turn.error', conversationId: sessionId, message: e.message });
-      } finally {
-        current = null;
-        proj.projectPending(); // discussion, tour, messages, appels d'outils, artefacts
-      }
-    });
-
-    socket.on('close', cancel);
-  });
-
-  return app;
-}
-
-// Lancement direct : node server.mjs (base par défaut : ~/.geminiboard/geminiboard.db)
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
-  const app = await buildServer({
-    dbPath: process.env.GEMINIBOARD_DB ?? join(homedir(), '.geminiboard', 'geminiboard.db'),
-  });
-  await app.listen({ host: '127.0.0.1', port: Number(process.env.PORT ?? 3210) });
-}
-```
-
-</details>
+| Terminal | Commande |
+|---|---|
+| 1 | `npm start` (ou `npx geminiboard serveur`) : le serveur écoute sur `127.0.0.1:3210` ; Gemini CLI hérite de l'environnement de ce terminal (`GOOGLE_CLOUD_PROJECT`, proxy, §5.5) |
+| 2 | `npx geminiboard projet ajouter <dossier d'un projet d'essai>` |
+| 2 | `npx geminiboard projet approuver <projet>` |
+| 2 | `npx geminiboard discuter --projet <projet> "Résume le fichier README de ce dossier"` |
+| 2 | `npx geminiboard discussions`, puis `npx geminiboard fil <discussion>` : la discussion relue depuis la base |
 
 ### 6.4 Canaux complémentaires
 
@@ -412,7 +352,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
 | Import de `~/.gemini/tmp/<project_hash>/chats/` | 6 | rattrapage de l'historique ; format non documenté |
 | ACP (`gemini --acp`) | 8 | autorisations en cours de tour ; même protocole pour Claude Code avec `claude-agent-acp`, qui exige Node.js 22 |
 
-Une session moteur ne donne qu'une discussion (`UNIQUE (engine_id, engine_session_id)`), projetée par un seul canal ; les autres restent consignés dans le journal brut.
+Une session moteur n'appartient qu'à une discussion (`UNIQUE (engine_id, engine_session_id)`), projetée par un seul canal ; les autres restent consignés dans le journal brut. Une discussion peut changer de session (§6.2).
 
 Le relais de hooks obéira à trois règles :
 
@@ -452,7 +392,7 @@ Source : [`migrations/001_init.sql`](migrations/001_init.sql), appliquée par `p
 - Le journal brut `event` est en ajout seul (garanti par des triggers) et constitue la seule source de vérité. Les autres tables sont des projections reconstructibles ; chaque événement traité porte la version du projecteur.
 - Le projecteur (`packages/server/src/projector.mjs`) traite un tour d'un bloc, dans une transaction, une fois son exécution close. Les horodatages viennent des événements et la clé d'un artefact dérive de son chemin (UUID version 8) : le rejeu est déterministe.
 - Une migration appliquée ne se modifie plus (empreinte sha256 vérifiée à l'ouverture) : toute évolution passe par un fichier `002_*.sql`.
-- Une session moteur correspond à une seule discussion, quel que soit le canal. En headless, l'identifiant de la discussion sert d'identifiant de session à Gemini CLI.
+- Une session moteur n'appartient qu'à une discussion, quel que soit le canal ; une discussion peut en traverser plusieurs (§6.2). En headless, la discussion (UUIDv7, choisi par le board) et la session de Gemini CLI (UUID aléatoire) ont deux identifiants distincts : le prompt journalisé porte celui de la discussion (`conversation_id`), les événements de Gemini CLI celui de la session.
 - Clés : UUIDv7 (texte) pour les entités exposées dans les URL, l'API et le MCP (projet, discussion, artefact, composant, exécution) ; entiers pour les tables à fort volume, dont le rowid stable sert de clé aux index plein texte.
 - Recherche plein texte FTS5 insensible aux accents (`unicode61 remove_diacritics 2`) sur les messages, les artefacts et les connaissances.
 - Binaires hors base (`blobs/`, adressés par sha256) ; textes en base.
@@ -497,7 +437,7 @@ erDiagram
 | | `engine_run` | processus lancé par le board : canal, argv (sans le prompt), pid, code de sortie, fin de stderr |
 | Projets | `project` | dossier racine et son approbation (`trusted`), dépôt, instructions, `gemini_project_hash`, politique de capture |
 | | `project_document` | connaissances du projet (texte indexé ou binaire) |
-| Discussions | `conversation` | moteur, `engine_session_id`, canal, modèle, mode d'approbation, statut, discussion parente |
+| Discussions | `conversation` | moteur, `engine_session_id` (session en cours), canal, modèle, mode d'approbation, statut, discussion parente |
 | | `turn` | un prompt et ses suites : statut, raison d'arrêt, message d'erreur, jetons, durée, commande d'origine |
 | | `message` | rôles `user`, `assistant`, `thought`, `system` ; séquence partagée avec `tool_call` |
 | | `tool_call` | outil, nature (`read`, `edit`, `execute`…), identifiant d'appel unique dans le tour, entrées, sortie, fichiers touchés, statut, composant concerné |
@@ -507,17 +447,17 @@ erDiagram
 | | `component_version` | contenu, empreinte, statut (`draft`, `proposed`, `ratified`, `deprecated`), commit, PR |
 | | `project_component` | activation par projet, version épinglée |
 | | `component_usage` | quelle version a servi dans quelle discussion (`activated`, `invoked`, `delegated`, `fired`, `blocked`) |
-| Journal | `event` | entrée brute (`headless`, `hook`, `import`, `acp`, `pty`, `board`), sens, type, session, charge JSON, état de projection |
+| Journal | `event` | entrée brute (`headless`, `hook`, `import`, `acp`, `pty`, `board`), sens, type, session, charge JSON, masquage appliqué (`redacted`), état de projection, discussion une fois le tour projeté |
 | Retours | `feedback` | note et commentaire sur un message, un appel, un tour ou une version |
 | Lecture | `v_timeline`, `v_conversation_overview`, `v_component_current` | vues stables pour l'interface, le serveur MCP et Claude |
 
 ### 7.4 Règles de projection
 
-Règles appliquées par `projector.mjs` (version 2) :
+Règles appliquées par `projector.mjs` (version 3). Le journal se projette dans l'ordre : une exécution encore ouverte retient les exécutions suivantes, pour que les versions d'artefacts gardent l'ordre des tours, mais pas les actions du board (projets, suppressions), qui se projettent aussitôt. Les événements d'un tour projeté portent sa discussion (`event.conversation_id`), ce qui permet de filtrer le journal par discussion.
 
 | Entrée | Projection |
 |---|---|
-| Prompt envoyé (`event` sortant `prompt`) | discussion créée au premier tour (`channel = headless`, identifiant = identifiant de session, titre tiré de la première ligne, projet dont le dossier contient `cwd`, sans tenir compte de la casse pour un chemin Windows) ; nouveau `turn` ; `message` `user` avec le texte envoyé ; commande d'origine si le prompt commence par `/` |
+| Prompt envoyé (`event` sortant `prompt`) | discussion nommée par le prompt (`conversation_id` ; à défaut, pour un journal antérieur à la version 3, l'identifiant de session) ; créée à son premier tour (`channel = headless`, titre tiré de la première ligne, projet déclaré dans le journal avant ce tour dont le dossier contient `cwd`, le plus profond l'emportant, sans tenir compte de la casse pour un chemin Windows) ; aux tours suivants, `engine_session_id` suit la session du tour ; nouveau `turn` ; `message` `user` avec le texte envoyé ; commande d'origine si le prompt commence par `/` |
 | `message` `user` (écho de Gemini CLI) | reste dans le journal, sans doublon dans `message` |
 | `init` | modèle du tour et de la discussion |
 | `message` `assistant` | fragments réunis en un seul message, clos au premier `tool_use`, au `result` ou à la fin du tour |
@@ -529,22 +469,25 @@ Règles appliquées par `projector.mjs` (version 2) :
 | `turn.cancel` (arrêt demandé par l'humain, action du board) | tour `cancelled`, sauf si un `result` en succès est arrivé ; vaut aussi sous Windows, où l'arrêt ne donne pas le code 130 |
 | Fin du processus sans `result` | 130 ou signal : `cancelled` ; 53 : `limit` ; autre code : `error`, avec la dernière ligne de stderr |
 | `project.upsert` (action du board) | `project` créé ou mis à jour |
-| `conversation.delete` (action du board) | discussion supprimée avec ses projections ; le journal reste et le rejeu respecte la suppression |
+| `conversation.delete` (action du board, `conversation_id`) | discussion supprimée avec ses projections ; le journal reste et le rejeu respecte la suppression |
 | Tour resté ouvert après un arrêt du serveur | clos au redémarrage (`recoverOpenRuns`), puis projeté comme annulé |
+| Tour d'un projet en capture `metadata` | mêmes règles, sans contenu : discussion sans titre, messages vides, appels d'outils sans entrées ni sortie, aucun artefact ; statuts, jetons et durées conservés (en capture `off`, rien n'est journalisé, donc rien n'est projeté) |
 | Hooks, import, ACP (étapes 6 et 8) | marqués traités, sans projection, jusqu'à leur étape |
 
 ### 7.5 Tests
 
-`npm install`, puis `npm test` (Node.js 20) : 63 tests, dont 62 passent et 1 attend un corpus réel ; sous Windows, 61 passent et 2 sont sautés (s'y ajoute le test du raccourci `gemini`).
+`npm install`, puis `npm test` (Node.js 20) : 83 tests, dont 82 passent et 1 attend un corpus réel ; sous Windows, 81 passent et 2 sont sautés (s'y ajoute le test du raccourci `gemini`).
 
 - Schéma (6) : migration et empreintes, lecture seule, contraintes, plein texte insensible aux accents, journal en ajout seul, vues.
-- Projecteur (13) : tour simple, outils et chronologie, `result` en erreur, fins sans `result`, tours successifs, artefacts et instantanés, composants, tour ouvert et reprise après arrêt, suppression, reconstruction à l'identique (O2), chemins POSIX et Windows, projet Windows trouvé sans tenir compte de la casse, arrêt demandé (`turn.cancel`).
+- Projecteur (15) : tour simple, outils et chronologie, `result` en erreur, fins sans `result`, tours successifs, artefacts et instantanés, composants, tour ouvert et reprise après arrêt, suppression, reconstruction à l'identique (O2), chemins POSIX et Windows, projet Windows trouvé sans tenir compte de la casse, arrêt demandé (`turn.cancel`), action du board projetée pendant un tour ouvert et rattachement aux seuls projets déclarés avant le tour, discussion sur plusieurs sessions de Gemini CLI.
+- Serveur (14) : masquage et capture `metadata` en unités, projets (validation, conflits, lien vers un dossier déjà inscrit), hôte et origine, tour de bout en bout par WebSocket, refus sans rien lancer, annulation, nouvelle session après un premier tour en erreur, instantanés, masquage, capture `metadata` et `off`, recherche et journal, sans Gemini CLI, arrêt et arrêt brutal (§6.3).
+- Client en ligne de commande (4) : aide et erreurs d'usage, projets (ajout, approbation, capture), `discuter` puis `fil` et `discussions`, Ctrl+C et prompt lu sur l'entrée standard d'un processus réel.
 - Rejeu de corpus (3) : un corpus synthétique produit par le spike avec le faux Gemini CLI, le même converti en corpus Windows (plateforme `win32`, chemins à barres inverses), puis chaque dossier `fixtures/spike-*` présent dans le dépôt. Chaque tour est vérifié (statut, message utilisateur, appels d'outils, texte de la réponse), puis la base est reconstruite à l'identique.
 - Lanceur (14) et spike (7).
 - Composants (11) : analyse du TOML et du frontmatter, injections `!{…}` et `@{…}`, politiques, renvois, chaque règle de contrôle sur un dépôt synthétique, composants de ce dépôt conformes (§9.7).
 - Scripts de la skill `geminiboard` (9) : compatibilité des bibliothèques avec Node.js 20, données sensibles, lignes ajoutées d'un diff, lecture du README et des migrations, `etat.mjs` et `verifier.mjs` lancés sur ce dépôt.
 
-Vérifié le 25 octobre 2026 en local sous Node.js 20.20.2 (trois exécutions) et 22.23 après une installation propre, puis en CI sous Ubuntu et sous Windows avec Node.js 20 et 22 : better-sqlite3 est un module natif, et changer de version de Node.js impose `npm rebuild`. Les corpus produits par Gemini CLI 0.65.0 réel sans compte valide (authentification absente, erreur d'API, reprise impossible) se rejouent aussi à l'identique.
+Vérifié le 25 octobre 2026 en local sous Node.js 20.20.2 (trois exécutions) et 22.23 après une installation propre, puis en CI sous Ubuntu et sous Windows avec Node.js 20 et 22 : better-sqlite3 est un module natif, et changer de version de Node.js impose `npm rebuild`. Les corpus produits par Gemini CLI 0.65.0 réel sans compte valide (authentification absente, erreur d'API, reprise impossible) se rejouent aussi à l'identique. Le 27 octobre 2026 (étape 4), la suite complète passe sous Node.js 20.20.2 en local, puis en CI sous Ubuntu et sous Windows avec Node.js 20 et 22 : 82 tests réussis et 1 sauté sous Linux, 81 et 2 sous Windows.
 
 ## 8. Lecture par Claude
 
@@ -832,12 +775,14 @@ Second ordre : les décisions de l'observateur (approbations, autorisations, rat
 ## 11. Sécurité et confidentialité
 
 - Écoute sur `127.0.0.1` uniquement ; le board n'envoie aucune donnée hors du poste.
+- Hôte et origine contrôlés, WebSocket compris : une requête dont l'hôte n'est ni `127.0.0.1` ni `localhost`, ou dont l'origine n'est pas celle du board (ni une origine de `allowedOrigins`), est refusée (403). Une page web ouverte dans le navigateur ne peut donc pas piloter le board, même par un nom de domaine qui pointerait vers `127.0.0.1`.
 - Le prompt passe par stdin, jamais par une ligne de commande ni par un shell : pas d'injection, pas de prompt visible dans `ps`.
 - `--skip-trust` seulement pour un dossier approuvé par l'humain dans le board (`project.trusted`), décision journalisée.
 - Le board ne détient aucun identifiant : la connexion et les clés restent celles de Gemini CLI (`.gemini`, variables d'environnement), qu'il ne lit pas.
 - Relais de hooks authentifié par HMAC-SHA256 (secret local, droits 600).
-- Masquage avant écriture : motifs de secrets configurables (clés d'API, jetons, en-têtes `Authorization`) ; la colonne `event.redacted` trace leur application.
-- Politique de capture par projet : `full`, `metadata` (sans contenu) ou `off`.
+- Masquage avant écriture, et dans le flux relayé au client : motifs intégrés (clés privées, clés d'API Google, Anthropic, OpenAI et AWS, jetons GitHub et Slack, JWT, en-têtes `Authorization`) et motifs ajoutés dans `config.json` ; la colonne `event.redacted` trace leur application. Gemini CLI reçoit le prompt tel quel : le masquage protège la base et l'affichage, pas l'échange avec le modèle.
+- Politique de capture par projet, choisie à sa création et modifiable pour les tours suivants : `full`, `metadata` (la forme sans le contenu : ni texte, ni entrées ou sorties d'outils, ni instantané) ou `off` (rien en base ; la reprise de la discussion ne vit que le temps du serveur). Quelle que soit la politique, Gemini CLI garde sa propre copie de chaque session dans `~/.gemini/tmp` (30 jours par défaut), hors du board.
+- Ressources : un tour à la fois par défaut, un seul par discussion ; un prompt de plus de 8 Mo est refusé, un instantané de plus de 1 Mo n'est pas pris.
 - La base n'est jamais versionnée. Ce dépôt public ne contient ni données ni extraits de session.
 - Lecture par Claude : connexion `mode=ro` et `query_only` ; export filtré pour toute transmission hors du poste.
 - Node.js 20 ne reçoit plus de correctifs de sécurité depuis le 30 avril 2026 (Q12).
@@ -851,8 +796,8 @@ Chaque étape se termine par une ratification en PR.
 | 0. Cadrage | ce README, décisions D1 à D12 | fusion de cette PR |
 | 1. Spike de capture | `spike/capture.mjs` fusionné (PR #3) ; reste à le lancer sur le poste avec un vrai compte (licence Gemini Code Assist Standard ou Enterprise, ou clé d'API payante, §5.5) et à committer le corpus dans `fixtures/` | corpus |
 | 2. Schéma v1 | `migrations/001_init.sql`, journal, projecteur et rejeu des fixtures (PR #4) ; mémoire et Windows natif (PR #5) ; reste l'ajustement au corpus réel | schéma v1 |
-| 3. Skill de construction | skill `geminiboard` (méthode, invariants, références, scripts `etat.mjs` et `verifier.mjs`), commandes TOML `/board:*` et sous-agent `relecteur-board`, qui guident Gemini CLI dans la construction du board ; extension du dépôt et ses contrôles (PR #8, §9.7) | skill 1.0.0 |
-| 4. Serveur | `packages/server` : lanceur, journal, projecteur, API, WebSocket ; inventaire du catalogue, en lecture (§9.2, D14) | une discussion de bout en bout ; inventaire du poste |
+| 3. Skill de construction | skill `geminiboard` (méthode, invariants, références, scripts `etat.mjs` et `verifier.mjs`), commandes TOML `/board:*` et sous-agent `relecteur-board`, qui guident Gemini CLI dans la construction du board ; extension du dépôt et ses contrôles, fusionnés (PR #8, §9.7) | skill 1.0.0 |
+| 4. Serveur | `packages/server` : API REST et WebSocket, conduite des tours, masquage, politiques de capture, projecteur en version 3 ; client en ligne de commande `geminiboard` (PR #9, §6.3) ; puis inventaire du catalogue, en lecture (§9.2, D14, D18), dans la PR suivante | une discussion de bout en bout (PR #9) ; inventaire du poste (PR suivante) |
 | 5. Interface | Angular : barre latérale, fil en continu, mode d'approbation, panneau d'artefacts ; page Catalogue en lecture (listes, fiches, usages) | parcours au clavier et au lecteur d'écran |
 | 6. Catalogue et capture passive | cycle de vie, contrôles et ratification, adoption, extension de projet (activation, épinglage, politiques), agents non reconnus signalés, migration `002_catalogue.sql` ; relais de hooks, livré dans les extensions de projet ; import des sessions | catalogue v1, O1 vérifié |
 | 7. Lecture par Claude | `geminiboard-mcp`, skill `geminiboard-journal`, export | O3 vérifié |
@@ -861,7 +806,7 @@ Chaque étape se termine par une ratification en PR.
 Points à trancher par le spike, sur le poste et avec un vrai compte :
 
 - **S1.** Corpus `stream-json` réel : tours avec outils, fragments `delta`, erreurs `error` et `result`.
-- **S2.** Reprise `--resume <uuid>` sur plusieurs tours ; comportement si deux tours visent la même session.
+- **S2.** Reprise `--resume <uuid>` sur plusieurs tours ; comportement si deux tours visent la même session (le serveur n'en lance qu'un par discussion).
 - **S3.** Effet réel des modes d'approbation et des règles `policies/*.toml` en headless.
 - **S4.** Délai de démarrage et mémoire d'un processus par prompt, sur le poste (Windows natif ou WSL2).
 - **S5.** Activation des composants par extension de projet (§9.4) : vérifiée le 26 octobre 2026 par `spike/catalogue.mjs`, sans compte, sous Linux et sous Windows (CI).
@@ -881,10 +826,10 @@ Tests : le projecteur est vérifié en rejouant les fixtures du spike ; l'interf
 | Q5 | Dépôt du code | **Tranchée (D11)** : ce dépôt |
 | Q6 | Dépôt des composants portables | **Tranchée (D12)** : ce dépôt |
 | Q7 | Rétention du journal brut | conservation intégrale ; un compactage des fragments après projection exigerait une exception au principe d'ajout seul |
-| Q8 | Capture par défaut des projets professionnels | `metadata`, avec passage à `full` projet par projet |
+| Q8 | Capture par défaut des projets professionnels | choisie à la création du projet (`--capture` du client, puis `projet capture`), `full` par défaut : le journal sert à être relu (O3), la base ne quitte pas le poste et les secrets y sont masqués, et Gemini CLI garde déjà ces échanges en entier dans `~/.gemini/tmp` ; `metadata` ou `off` pour un projet dont le contenu ne doit pas être conservé ; un changement vaut pour les tours suivants. Remplace la proposition précédente, `metadata` par défaut (proposé) |
 | Q9 | Moteur `claude-code` dans le board | à l'étape 8, avec ACP ; exige Node.js 22 |
-| Q10 | Fichier de contexte | `AGENTS.md` comme source unique ; pour ce dépôt, Gemini CLI le charge comme fichier de contexte de l'extension du dépôt (`contextFileName`, §9.7), sans toucher aux réglages de l'utilisateur, et Claude Code le lit de lui-même (proposé) |
-| Q11 | Mode d'approbation par défaut d'une nouvelle discussion | `default` ; `auto_edit` ou `yolo` sur choix explicite, journalisé |
+| Q10 | Fichier de contexte | **Tranchée (D19)** : `AGENTS.md` comme source unique ; pour ce dépôt, Gemini CLI le charge comme fichier de contexte de l'extension du dépôt (`contextFileName`, §9.7), sans toucher aux réglages de l'utilisateur, et Claude Code le lit de lui-même |
+| Q11 | Mode d'approbation par défaut d'une nouvelle discussion | `default` ; `auto_edit`, `yolo` ou `plan` sur choix explicite, prompt par prompt, journalisé avec le prompt (proposé) |
 | Q12 | Passage à Node.js 22 | Node.js 20 n'a plus de correctifs depuis le 30 avril 2026 ; Node.js 22 ouvrirait Angular 22, better-sqlite3 13 et `claude-agent-acp` |
 | Q13 | Nom du dépôt | le renommer `geminiboard` maintenant qu'il porte le code (GitHub redirige l'ancienne adresse) |
 | Q14 | Plateforme du poste | **Tranchée (D13)** : Windows natif ou WSL2, au choix ; le natif évite de garder une machine virtuelle allumée, sauf si Docker Desktop ou un équivalent l'utilise déjà (§5.4) |
@@ -894,6 +839,9 @@ Tests : le projecteur est vérifié en rejouant les fixtures du spike ; l'interf
 | Q18 | Fichiers internes de Gemini CLI (`extension-enablement.json`, `acknowledgments/agents.json`) | **Tranchée (D16)** : le board ne les écrit pas lui-même ; l'activation passe par les commandes publiques `gemini extensions enable` et `disable`, vérifiées par le spike S5 ; un agent du dépôt se reconnaît dans un terminal, ou s'adopte dans l'extension du projet |
 | Q19 | Versions activables dans un projet | **Tranchée (D17)** : ratifiées seulement ; un brouillon s'essaie dans un projet de bac à sable |
 | Q20 | Inventaire de Claude Code | **Tranchée (D18)** : dès l'étape 4, en lecture seule, pour préparer la transition |
+| Q21 | Tours simultanés | un à la fois par défaut, un seul par discussion ; jusqu'à 8 par `maxConcurrentTurns` : chaque tour coûte environ 270 Mo (§5.4) (proposé) |
+| Q22 | Discussion hors projet | une discussion naît dans un projet dont l'humain a approuvé le dossier ; un projet « Brouillon », dans un dossier du board, pour les questions sans dossier, à trancher avec l'interface (étape 5) (proposé) |
+| Q23 | Accès au serveur | hôte et origine contrôlés (§11), `allowedOrigins` pour l'interface en développement ; pas de jeton d'accès tant que le poste n'a qu'un utilisateur. Sur un poste partagé, un autre utilisateur pourrait joindre le port : un jeton local (`~/.geminiboard/secret`) le fermerait (proposé) |
 
 ## 14. Références
 

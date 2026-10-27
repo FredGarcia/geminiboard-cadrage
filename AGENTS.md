@@ -21,6 +21,7 @@ Active la skill `geminiboard` : sous Gemini CLI, par l'outil `activate_skill` ; 
 ## Commandes utiles, depuis la racine du dépôt
 
 - `npm test` : suite de tests, sous Node.js 20.
+- `npm start` : serveur du board, sur `127.0.0.1:3210` ; `npx geminiboard` : son client en ligne de commande (`npx geminiboard aide`), depuis la racine du dépôt seulement (ailleurs, `npx` chercherait un paquet de ce nom sur npm).
 - `node skills/geminiboard/scripts/etat.mjs` : état du dépôt et de la feuille de route.
 - `node skills/geminiboard/scripts/verifier.mjs` : contrôles avant une PR.
 - Sous Gemini CLI : `/board:etape`, `/board:verifier`, `/board:revue`, `/board:pr`, `/board:migration`.

@@ -4,13 +4,13 @@
 // Node.js 20 ou plus, sans dépendance. Mode d'emploi : spike/README.md
 import { parseArgs } from 'node:util';
 import { spawn } from 'node:child_process';
+import { randomUUID } from 'node:crypto';
 import { performance } from 'node:perf_hooks';
 import { mkdtempSync, mkdirSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { homedir, tmpdir, userInfo } from 'node:os';
 import { dirname, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { resolveGeminiEntry, runGemini } from '../packages/server/src/run-gemini.mjs';
-import { uuidv7 } from '../packages/server/src/uuidv7.mjs';
 import { MEMORY_SCOPE, sampleMemory } from './memory.mjs';
 import { createRedactor } from './redact.mjs';
 import { assistantText, buildScenarios, toolCalls, WORKSPACE_FILES } from './scenarios.mjs';
@@ -168,11 +168,14 @@ const safeCheck = (check, input) => {
 // --- Scénarios -----------------------------------------------------------------
 const scenarios = buildScenarios({ withYolo: opt['with-yolo'], policyFile: join(here, 'policy-ls.toml') })
   .filter((s) => !only || only.includes(s.id));
+// Identifiants de session aléatoires (UUID version 4) : Gemini CLI 0.65 nomme le fichier d'une session
+// d'après la minute et les 8 premiers caractères de l'identifiant ; deux UUIDv7 de la même minute
+// partagent ces caractères, et la seconde session écraserait la première
 const sessions = new Map();
 const sessionFor = (key) => {
-  if (key === 'new') return { id: uuidv7(), resume: false };
+  if (key === 'new') return { id: randomUUID(), resume: false };
   if (sessions.has(key)) return { id: sessions.get(key), resume: true };
-  const id = uuidv7();
+  const id = randomUUID();
   sessions.set(key, id);
   return { id, resume: false };
 };

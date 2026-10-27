@@ -2,7 +2,7 @@
 // projection, masquage, politiques de capture, sécurité, arrêt et reprise. Node.js 20, Linux et Windows.
 import { after, test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -37,7 +37,9 @@ async function until(pred, { timeout = 15000, step = 25, what = 'condition' } = 
 
 /** Serveur sur un port libre, base et projet dans un dossier temporaire. */
 async function setup(opts = {}) {
-  const dir = mkdtempSync(join(tmpdir(), 'geminiboard-serveur-'));
+  // Forme canonique, comme la racine d'un projet dans le serveur : sous Windows, le dossier temporaire
+  // peut être un nom court (RUNNER~1 en CI, JEANDU~1 sur un poste), que le serveur range sous sa forme longue
+  const dir = realpathSync.native(mkdtempSync(join(tmpdir(), 'geminiboard-serveur-')));
   const projectDir = join(dir, 'projet');
   mkdirSync(projectDir);
   writeFileSync(join(projectDir, 'notes.md'), '# titre\n');
@@ -147,6 +149,11 @@ test('API : santé, projets (validation, conflits, approbation), erreurs en JSON
     assert.equal(p.trusted, false, 'un projet n\'est approuvé que sur demande explicite');
     assert.equal(p.capture, 'metadata');
     assert.equal((await s.api('POST', '/api/projects', { name: 'Autre', root_path: join(s.projectDir, '.') })).status, 409, 'même dossier');
+    // Une autre écriture du même dossier (lien, ou jonction sans droits d'administrateur sous Windows)
+    // se ramène à sa forme canonique : même conflit
+    const link = join(s.dir, 'lien');
+    symlinkSync(s.projectDir, link, 'junction');
+    assert.equal((await s.api('POST', '/api/projects', { name: 'Autre', root_path: link })).status, 409, 'même dossier, par un lien');
 
     const other = join(s.dir, 'autre');
     mkdirSync(other);

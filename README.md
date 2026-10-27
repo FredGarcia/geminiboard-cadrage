@@ -1,8 +1,8 @@
 # GeminiBoard : cadrage
 
-> **Statut** : v0.2 ratifiée le 25 octobre 2026 (PR #2) · étape 1 : spike fusionné (PR #3), corpus à collecter · étape 2 : migration, journal et projecteur fusionnés (PR #4), mémoire et Windows natif (PR #5), Windows ou WSL2 au choix et CI (PR #6), gestion des composants conçue (PR #7), ajustement au corpus réel à venir · étape 3 : skill de construction `geminiboard` ratifiée (PR #8) · étape 4 : serveur et client en ligne de commande proposés (PR #9), inventaire du catalogue à suivre
+> **Statut** : v0.2 ratifiée le 25 octobre 2026 (PR #2) · étape 1 : spike fusionné (PR #3), corpus à collecter · étape 2 : migration, journal et projecteur fusionnés (PR #4), mémoire et Windows natif (PR #5), Windows ou WSL2 au choix et CI (PR #6), gestion des composants conçue (PR #7), ajustement au corpus réel à venir · étape 3 : skill de construction `geminiboard` ratifiée (PR #8) · étape 4 : serveur et client en ligne de commande proposés (PR #9), inventaire du catalogue à suivre · hors feuille de route : utilitaires Jira proposés dans `utils/` (Q24)
 >
-> **Portée de ce dépôt** : le cadrage, le code du board (D11) et les composants portables (D12).
+> **Portée de ce dépôt** : le cadrage, le code du board (D11) et les composants portables (D12) ; en attendant leur intégration, des utilitaires annexes dans `utils/` (Q24).
 
 GeminiBoard est une interface locale, au style de celle de Claude, qui pilote Gemini CLI et gère les discussions, les projets, les artefacts, les sous-agents, les skills, les commandes et les outils. Chaque échange et chaque action de gestion sont journalisés dans **un seul fichier SQLite**, conçu pour être relu par Claude le jour où le travail passera sur Claude. Les composants (skills, sous-agents, commandes, hooks) restent **portables entre Gemini CLI et Claude Code**.
 
@@ -842,6 +842,7 @@ Tests : le projecteur est vérifié en rejouant les fixtures du spike ; l'interf
 | Q21 | Tours simultanés | un à la fois par défaut, un seul par discussion ; jusqu'à 8 par `maxConcurrentTurns` : chaque tour coûte environ 270 Mo (§5.4) (proposé) |
 | Q22 | Discussion hors projet | une discussion naît dans un projet dont l'humain a approuvé le dossier ; un projet « Brouillon », dans un dossier du board, pour les questions sans dossier, à trancher avec l'interface (étape 5) (proposé) |
 | Q23 | Accès au serveur | hôte et origine contrôlés (§11), `allowedOrigins` pour l'interface en développement ; pas de jeton d'accès tant que le poste n'a qu'un utilisateur. Sur un poste partagé, un autre utilisateur pourrait joindre le port : un jeton local (`~/.geminiboard/secret`) le fermerait (proposé) |
+| Q24 | Utilitaires annexes (`utils/`) | outils locaux sans lien avec le board, déposés ici en attendant leur intégration : capture en MHTML de la page d'un sprint Jira derrière un SSO, export des tickets par l'API REST de Jira (`utils/README.md`). Dépendances à part (`utils/package.json` : `playwright-core` 1.63.0, qui accepte Node.js 20), hors des espaces de travail npm, de `npm test` et de la CI ; le `.gitignore` écarte la session SSO et les tickets capturés ou exportés. Leur place définitive, outil du catalogue du board ou dépôt à part, se décide à l'intégration (proposé) |
 
 ## 14. Références
 

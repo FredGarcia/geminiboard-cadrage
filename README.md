@@ -1,6 +1,6 @@
 # GeminiBoard : cadrage
 
-> **Statut** : v0.2 ratifiée le 25 octobre 2026 (PR #2) · étape 1 : spike fusionné (PR #3), corpus à collecter · étape 2 : migration, journal et projecteur fusionnés (PR #4), mémoire et Windows natif (PR #5), Windows ou WSL2 au choix et CI (PR #6), gestion des composants conçue (PR #7), ajustement au corpus réel à venir · étape 3 : skill de construction `geminiboard` ratifiée (PR #8) · étape 4 : serveur et client en ligne de commande proposés (PR #9), inventaire du catalogue à suivre · hors feuille de route : utilitaires Jira proposés dans `utils/` (Q24)
+> **Statut** : v0.2 ratifiée le 25 octobre 2026 (PR #2) · étape 1 : spike fusionné (PR #3), corpus à collecter · étape 2 : migration, journal et projecteur fusionnés (PR #4), mémoire et Windows natif (PR #5), Windows ou WSL2 au choix et CI (PR #6), gestion des composants conçue (PR #7), ajustement au corpus réel à venir · étape 3 : skill de construction `geminiboard` ratifiée (PR #8) · étape 4 : serveur et client en ligne de commande proposés (PR #9), inventaire du catalogue à suivre · hors feuille de route : utilitaires Jira proposés dans `utils/` (PR #10, Q24)
 >
 > **Portée de ce dépôt** : le cadrage, le code du board (D11) et les composants portables (D12) ; en attendant leur intégration, des utilitaires annexes dans `utils/` (Q24).
 

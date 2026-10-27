@@ -5,7 +5,11 @@
 import { createHash } from 'node:crypto';
 import { posix, win32 } from 'node:path';
 
-export const PROJECTOR_VERSION = 2;
+// 3 : les actions du board (projets, suppressions) se projettent sans attendre la fin des tours en cours ;
+//     une discussion se rattache aux projets déclarés avant son premier tour, d'après le journal ;
+//     la discussion est celle que nomme le prompt (conversation_id), et peut changer de session Gemini CLI ;
+//     les événements d'un tour projeté portent sa discussion (event.conversation_id)
+export const PROJECTOR_VERSION = 3;
 
 // Chemins Windows (C:\…, \\serveur\…) ou POSIX, reconnus à leur forme et non au système qui rejoue :
 // un journal écrit sous Windows se projette à l'identique sous Linux (et inversement).
@@ -81,14 +85,23 @@ const relativeTo = (root, path) => inside(root, path) || path;
 
 export function createProjector(db, { version = PROJECTOR_VERSION } = {}) {
   const q = {
-    nextPending: db.prepare('SELECT * FROM event WHERE projected_at IS NULL ORDER BY id LIMIT 1'),
+    nextPending: db.prepare('SELECT * FROM event WHERE projected_at IS NULL AND id > ? ORDER BY id LIMIT 1'),
+    firstEventOfRun: db.prepare('SELECT min(id) AS id FROM event WHERE engine_run_id = ?'),
+    // Projets déclarés avant un événement donné, dans leur dernier état connu à ce moment-là
+    projectsBefore: db.prepare(`SELECT json_extract(e.payload_json, '$.id') AS id,
+        json_extract(e.payload_json, '$.root_path') AS root_path
+      FROM event e
+      WHERE e.source = 'board' AND e.type = 'project.upsert' AND e.id < @before
+        AND e.id = (SELECT max(x.id) FROM event x WHERE x.source = 'board' AND x.type = 'project.upsert' AND x.id < @before
+          AND json_extract(x.payload_json, '$.id') = json_extract(e.payload_json, '$.id'))`),
     run: db.prepare('SELECT * FROM engine_run WHERE id = ?'),
     runEvents: db.prepare('SELECT * FROM event WHERE engine_run_id = ? ORDER BY id'),
-    markRun: db.prepare('UPDATE event SET projected_at = ?, projector_version = ? WHERE engine_run_id = ?'),
+    // Les événements d'un tour projeté sont rattachés à sa discussion (colonne de rattachement, modifiable)
+    markRun: db.prepare('UPDATE event SET projected_at = ?, projector_version = ?, conversation_id = ? WHERE engine_run_id = ?'),
     markOne: db.prepare('UPDATE event SET projected_at = ?, projector_version = ? WHERE id = ?'),
     tombstone: db.prepare(`SELECT 1 FROM event
-      WHERE source = 'board' AND type = 'conversation.delete' AND engine_session_id = ? LIMIT 1`),
-    projects: db.prepare('SELECT id, root_path FROM project WHERE root_path IS NOT NULL'),
+      WHERE source = 'board' AND type = 'conversation.delete'
+        AND coalesce(json_extract(payload_json, '$.conversation_id'), engine_session_id) = ? LIMIT 1`),
     project: db.prepare('SELECT id, root_path FROM project WHERE id = ?'),
     upsertProject: db.prepare(`INSERT INTO project
         (id, slug, name, description, instructions, root_path, gemini_project_hash, repo_url, trusted, capture, created_at, updated_at)
@@ -100,7 +113,8 @@ export function createProjector(db, { version = PROJECTOR_VERSION } = {}) {
     conversation: db.prepare('SELECT * FROM conversation WHERE id = ?'),
     insertConversation: db.prepare(`INSERT INTO conversation
         (id, project_id, engine_id, engine_session_id, channel, title, cwd, approval_mode, started_at, updated_at)
-      VALUES (@id, @projectId, @engineId, @id, 'headless', @title, @cwd, @approvalMode, @startedAt, @startedAt)`),
+      VALUES (@id, @projectId, @engineId, @engineSessionId, 'headless', @title, @cwd, @approvalMode, @startedAt, @startedAt)`),
+    setSession: db.prepare('UPDATE conversation SET engine_session_id = ? WHERE id = ?'),
     setApproval: db.prepare('UPDATE conversation SET approval_mode = ? WHERE id = ?'),
     setModel: db.prepare('UPDATE conversation SET model = ? WHERE id = ?'),
     deleteConversation: db.prepare('DELETE FROM conversation WHERE id = ?'),
@@ -143,10 +157,12 @@ export function createProjector(db, { version = PROJECTOR_VERSION } = {}) {
       VALUES (@artifactId, @version, @content, @mime, @sha256, @size, 'agent', @toolCallId, @at)`),
   };
 
-  // Projet dont le dossier racine contient cwd (le plus profond l'emporte)
-  function projectFor(cwd) {
+  // Projet dont le dossier racine contient cwd (le plus profond l'emporte), parmi les projets déclarés
+  // avant le premier événement du tour : le rattachement ne dépend pas de l'ordre de projection (O2)
+  function projectFor(cwd, beforeEventId) {
     let best = null;
-    for (const p of q.projects.all()) {
+    for (const p of q.projectsBefore.all({ before: beforeEventId })) {
+      if (!p.id || !p.root_path || !q.project.get(p.id)) continue;
       if (inside(p.root_path, cwd) !== null && (!best || p.root_path.length > best.root_path.length)) best = p;
     }
     return best;
@@ -174,28 +190,33 @@ export function createProjector(db, { version = PROJECTOR_VERSION } = {}) {
 
   function projectRun(run, at) {
     const events = q.runEvents.all(run.id);
-    const sessionId = events.find((e) => e.engine_session_id)?.engine_session_id;
-    if (!sessionId || q.tombstone.get(sessionId)) { q.markRun.run(at, version, run.id); return; }
-
     const promptEvent = events.find((e) => e.direction === 'out' && e.type === 'prompt');
     const prompt = (promptEvent && parse(promptEvent.payload_json)) ?? { text: '' };
+    // Discussion du board : celle que nomme le prompt ; à défaut (journaux plus anciens), la session de
+    // Gemini CLI. Une discussion change de session quand son premier tour échoue : la session ratée ne se
+    // reprend ni ne se recrée (Gemini CLI 0.65 sort avec 42 dans les deux cas).
+    const engineSessionId = events.find((e) => e.engine_session_id)?.engine_session_id ?? null;
+    const cid = (typeof prompt.conversation_id === 'string' && prompt.conversation_id) || engineSessionId;
+    if (!cid || q.tombstone.get(cid)) { q.markRun.run(at, version, null, run.id); return; }
 
     // Discussion : créée au premier tour, rattachée au projet dont le dossier contient cwd
-    let conv = q.conversation.get(sessionId);
+    let conv = q.conversation.get(cid);
     if (!conv) {
-      q.insertConversation.run({ id: sessionId, projectId: projectFor(run.cwd)?.id ?? null, engineId: run.engine_id,
+      const firstId = q.firstEventOfRun.get(run.id).id;
+      q.insertConversation.run({ id: cid, engineSessionId, projectId: projectFor(run.cwd, firstId)?.id ?? null, engineId: run.engine_id,
         title: titleOf(prompt.text), cwd: run.cwd, approvalMode: prompt.approvalMode ?? null, startedAt: run.started_at });
-    } else if (prompt.approvalMode) {
-      q.setApproval.run(prompt.approvalMode, sessionId);
+    } else {
+      if (prompt.approvalMode) q.setApproval.run(prompt.approvalMode, cid);
+      if (engineSessionId && conv.engine_session_id !== engineSessionId) q.setSession.run(engineSessionId, cid);
     }
-    conv = q.conversation.get(sessionId);
+    conv = q.conversation.get(cid);
     const root = (conv.project_id && q.project.get(conv.project_id)?.root_path) || run.cwd;
 
     // Tour et message de l'utilisateur (le texte envoyé, pas l'écho de Gemini CLI)
-    const turnId = Number(q.insertTurn.run({ conversationId: sessionId, seq: q.nextTurnSeq.get(sessionId).n, runId: run.id,
+    const turnId = Number(q.insertTurn.run({ conversationId: cid, seq: q.nextTurnSeq.get(cid).n, runId: run.id,
       command: commandOf(prompt.text), startedAt: run.started_at }).lastInsertRowid);
-    let seq = q.nextItemSeq.get({ c: sessionId }).n;
-    q.insertMessage.run({ conversationId: sessionId, turnId, seq: seq++, role: 'user', content: String(prompt.text ?? ''),
+    let seq = q.nextItemSeq.get({ c: cid }).n;
+    q.insertMessage.run({ conversationId: cid, turnId, seq: seq++, role: 'user', content: String(prompt.text ?? ''),
       createdAt: run.started_at, completedAt: run.started_at });
 
     const snapshots = new Map(events
@@ -208,7 +229,7 @@ export function createProjector(db, { version = PROJECTOR_VERSION } = {}) {
     let model = null;
     const flush = () => {
       if (!buffer) return;
-      q.insertMessage.run({ conversationId: sessionId, turnId, seq: seq++, role: 'assistant', content: buffer.text,
+      q.insertMessage.run({ conversationId: cid, turnId, seq: seq++, role: 'assistant', content: buffer.text,
         createdAt: buffer.first, completedAt: buffer.last });
       buffer = null;
     };
@@ -235,11 +256,11 @@ export function createProjector(db, { version = PROJECTOR_VERSION } = {}) {
             : name === 'invoke_agent' ? ['agent', ev.parameters?.agent_name, 'delegated'] : null;
           const componentId = target && target[1]
             ? q.component.get({ kind: target[0], name: target[1], projectId: conv.project_id })?.id ?? null : null;
-          const id = Number(q.insertTool.run({ conversationId: sessionId, turnId, seq: seq++, callId: ev.tool_id ?? null,
+          const id = Number(q.insertTool.run({ conversationId: cid, turnId, seq: seq++, callId: ev.tool_id ?? null,
             name, kind: toolKind(name), componentId, input: JSON.stringify(ev.parameters ?? {}), startedAt: ts }).lastInsertRowid);
           if (ev.tool_id) tools.set(ev.tool_id, { id, event: ev, startedAt: ts });
           if (componentId) {
-            q.insertUsage.run({ conversationId: sessionId, turnId, componentId,
+            q.insertUsage.run({ conversationId: cid, turnId, componentId,
               versionId: q.currentVersion.get(componentId)?.version_id ?? null, usage: target[2], toolCallId: id, at: ts });
           }
           break;
@@ -302,8 +323,8 @@ export function createProjector(db, { version = PROJECTOR_VERSION } = {}) {
       inputTokens: int(stats?.input_tokens), outputTokens: int(stats?.output_tokens), cachedTokens: int(stats?.cached),
       stats: stats ? JSON.stringify(stats) : null, endedAt,
       duration: int(stats?.duration_ms) ?? elapsed(run.started_at, endedAt) });
-    if (model) q.setModel.run(model, sessionId);
-    q.markRun.run(at, version, run.id);
+    if (model) q.setModel.run(model, cid);
+    q.markRun.run(at, version, cid, run.id);
   }
 
   function projectBoard(e, at) {
@@ -315,24 +336,29 @@ export function createProjector(db, { version = PROJECTOR_VERSION } = {}) {
         trusted: p.trusted ? 1 : 0, capture: p.capture ?? 'full', at: e.received_at,
       });
     } else if (e.type === 'conversation.delete') {
-      q.deleteConversation.run(e.engine_session_id ?? p.conversation_id ?? '');
+      q.deleteConversation.run(p.conversation_id ?? e.engine_session_id ?? '');
     }
     q.markOne.run(at, version, e.id); // types inconnus de cette version : ignorés
   }
 
   /**
    * Projette les événements en attente, dans l'ordre du journal.
-   * S'arrête au premier tour encore ouvert : la suite attend sa clôture.
+   * Un tour encore ouvert bloque les tours suivants, qui attendent sa clôture : les versions d'artefacts
+   * gardent l'ordre des tours. Les actions du board (projets, suppressions) passent sans l'attendre.
    */
   function projectPending() {
     let projected = 0;
+    let after = 0;
+    let runsBlocked = false;
     for (;;) {
-      const e = q.nextPending.get();
+      const e = q.nextPending.get(after);
       if (!e) break;
+      after = e.id;
       const at = new Date().toISOString();
       if (e.engine_run_id) {
+        if (runsBlocked) continue;
         const run = q.run.get(e.engine_run_id);
-        if (run && !run.ended_at) break;
+        if (run && !run.ended_at) { runsBlocked = true; continue; }
         if (run) db.transaction(() => projectRun(run, at))();
         else q.markOne.run(at, version, e.id); // exécution inconnue : événement orphelin
       } else if (e.source === 'board') {

@@ -11,7 +11,9 @@
 //   FAKE_GEMINI_HANG=1    attend l'arrêt quel que soit le prompt
 //   FAKE_GEMINI_LOGIN=1   connexion Google sans identifiants en cache, comme Gemini CLI 0.65 : code 41
 //                         avec NO_BROWSER ; sinon, demande d'accord sur stdout, prompt pris pour la réponse, code 42
-import { readFileSync, writeFileSync } from 'node:fs';
+//   FAKE_GEMINI_STATE=<d> sessions tenues comme Gemini CLI 0.65, dans le dossier <d> : --session-id d'une session
+//                         existante, ou --resume d'une session qui n'a jamais abouti, sortent avec 42
+import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 const args = process.argv.slice(2);
@@ -40,6 +42,23 @@ if (process.env.FAKE_GEMINI_LOGIN === '1') {
   process.stdout.write('\nOpening authentication page in your browser. Do you want to continue? [Y/n]: ');
   process.stderr.write('Authentication cancelled by user.\nNo input provided via stdin.\n');
   process.exit(42);
+}
+
+// Sessions, comme Gemini CLI 0.65 : la session est écrite dès le premier tour, même s'il échoue, mais ne se
+// reprend qu'après une réponse du modèle
+const stateDir = process.env.FAKE_GEMINI_STATE;
+const sessionFile = stateDir && sessionId ? join(stateDir, `${sessionId}.session`) : null;
+if (sessionFile && args.includes('--session-id')) {
+  if (existsSync(sessionFile)) {
+    process.stderr.write(`Error starting session: Session ID "${sessionId}" already exists. Use --resume to resume it, or provide a different ID.\n`);
+    process.exit(42);
+  }
+  writeFileSync(sessionFile, 'started');
+} else if (sessionFile && args.includes('--resume')) {
+  if (!existsSync(sessionFile) || readFileSync(sessionFile, 'utf8') !== 'ok') {
+    process.stderr.write('Error resuming session: No previous sessions found for this project.\n');
+    process.exit(42);
+  }
 }
 
 process.stderr.write(`fake args=${JSON.stringify(args)} relance=${process.env.GEMINI_CLI_NO_RELAUNCH === 'true' ? 'non' : 'oui'}`
@@ -84,6 +103,7 @@ if (prompt.includes('APIERR') || process.env.FAKE_GEMINI_APIERR === '1') {
     process.stdout.write('ligne non JSON\n');
     out({ type: 'result', timestamp: ts(), status: 'success',
       stats: { total_tokens: 30, input_tokens: 20, output_tokens: 10, cached: 0, input: 20, duration_ms: 5, tool_calls: 1, models: {} } });
+    if (sessionFile) writeFileSync(sessionFile, 'ok');
     process.exit(prompt.includes('FAIL42') ? 42 : prompt.includes('FAIL55') ? 55 : 0);
   }, 30);
 }

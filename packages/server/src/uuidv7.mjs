@@ -1,4 +1,6 @@
-// uuidv7.mjs : identifiants triés par date (RFC 9562), acceptés par --session-id de Gemini CLI.
+// uuidv7.mjs : identifiants triés par date (RFC 9562), pour les entités du board (projets, discussions,
+// exécutions). Pas pour les sessions de Gemini CLI : il nomme leur fichier d'après la minute et les 8 premiers
+// caractères de l'identifiant, que deux UUIDv7 de la même minute partagent (voir turns.mjs).
 import { randomBytes } from 'node:crypto';
 
 export function uuidv7() {

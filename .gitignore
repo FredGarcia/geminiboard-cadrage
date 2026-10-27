@@ -3,3 +3,9 @@ node_modules/
 *.db-wal
 *.db-shm
 .geminiboard/
+
+# utils/ : session SSO de Jira, tickets capturés ou exportés (données de client, jamais dans ce dépôt public)
+.jira-profile/
+*.mhtml
+utils/mhtml/
+utils/exports/

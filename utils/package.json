@@ -1,0 +1,16 @@
+{
+  "name": "geminiboard-utils",
+  "private": true,
+  "description": "Utilitaires annexes au board : capture et export des tickets d'un sprint Jira",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "capture": "node jira-capture-app.mjs",
+    "capture:cli": "node jira-capture-mhtml.mjs",
+    "export": "node jira-sprint-app.mjs"
+  },
+  "dependencies": {
+    "playwright-core": "1.63.0"
+  }
+}

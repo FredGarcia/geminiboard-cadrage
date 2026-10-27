@@ -1,0 +1,144 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Export des tickets du sprint Jira</title>
+<style>
+  body { font-family: system-ui, sans-serif; max-width: 1100px; margin: 2rem auto; padding: 0 1rem; color: #1f2933; }
+  h1 { font-size: 1.5rem; }
+  form { display: grid; grid-template-columns: 1fr 1fr; gap: .75rem; align-items: end; margin-bottom: 1rem; }
+  label { display: flex; flex-direction: column; font-size: .9rem; gap: .25rem; }
+  .wide { grid-column: 1 / -1; }
+  input { padding: .5rem; font-size: 1rem; border: 1px solid #9aa5b1; border-radius: 4px; }
+  button { padding: .6rem 1rem; font-size: 1rem; cursor: pointer; }
+  button:disabled { opacity: .6; cursor: wait; }
+  #status { min-height: 1.5rem; margin: .5rem 0; }
+  .err { color: #b42318; }
+  .note { font-size: .85rem; color: #52606d; }
+  table { border-collapse: collapse; width: 100%; font-size: .85rem; margin-top: 1rem; }
+  th, td { border: 1px solid #d9dee3; padding: .35rem .5rem; text-align: left; vertical-align: top; }
+  th { background: #f0f3f6; }
+  #result button { margin: .5rem 0; }
+</style>
+</head>
+<body>
+<h1>Export des tickets du prochain sprint</h1>
+<p class="note">
+  Vos identifiants restent sur cette machine. Ils sont transmis à votre Jira uniquement pour cette requête :
+  ils ne sont ni enregistrés, ni journalisés, et le champ mot de passe est vidé après envoi.
+</p>
+
+<form id="f" autocomplete="off">
+  <label class="wide">URL Jira
+    <input name="url" required placeholder="https://votre-org.atlassian.net">
+  </label>
+  <label>Identifiant (e-mail ou login)
+    <input name="login" required autocomplete="username">
+  </label>
+  <label>Mot de passe
+    <input name="password" type="password" required autocomplete="current-password">
+  </label>
+  <label>Tableau (nom ou identifiant)
+    <input name="board" required>
+  </label>
+  <label>Sprint (vide = prochain sprint)
+    <input name="sprint">
+  </label>
+  <label class="wide">Champ d'estimation (facultatif)
+    <input name="pointsField" placeholder="customfield_10016">
+  </label>
+  <div class="wide">
+    <button id="go" type="submit">Exporter</button>
+  </div>
+</form>
+
+<div id="status" role="status" aria-live="polite"></div>
+<div id="result"></div>
+
+<script>
+  const $ = (id) => document.getElementById(id);
+  let last = null;
+
+  function el(tag, text) {
+    const node = document.createElement(tag);
+    node.textContent = text ?? '';
+    return node;
+  }
+
+  function toCsv(rows) {
+    if (!rows.length) return '';
+    const cols = Object.keys(rows[0]);
+    const esc = (v) => '"' + String(v ?? '').replace(/"/g, '""') + '"';
+    return [cols.join(';'), ...rows.map((r) => cols.map((c) => esc(r[c])).join(';'))].join('\r\n');
+  }
+
+  function download() {
+    const blob = new Blob(['\ufeff' + toCsv(last.tickets)], { type: 'text/csv;charset=utf-8' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = last.sprint.name.replace(/[^\w-]+/g, '_') + '.csv';
+    a.click();
+    URL.revokeObjectURL(a.href);
+  }
+
+  function render(data) {
+    last = data;
+    const box = $('result');
+    box.replaceChildren();
+
+    const counts = {};
+    data.tickets.forEach((t) => { counts[t.statut] = (counts[t.statut] || 0) + 1; });
+    box.append(el('h2', `${data.sprint.name} : ${data.tickets.length} tickets`));
+    box.append(el('p', Object.entries(counts).map(([k, v]) => `${k} : ${v}`).join('  |  ')));
+
+    const btn = el('button', 'Télécharger le CSV');
+    btn.type = 'button';
+    btn.addEventListener('click', download);
+    box.append(btn);
+
+    const cols = ['cle', 'type', 'resume', 'statut', 'assigne', 'priorite', 'estimation', 'parent', 'libelles', 'nb_liens'];
+    const table = document.createElement('table');
+    const head = document.createElement('tr');
+    cols.forEach((c) => head.append(el('th', c)));
+    table.append(head);
+    data.tickets.forEach((t) => {
+      const tr = document.createElement('tr');
+      cols.forEach((c) => tr.append(el('td', t[c])));
+      table.append(tr);
+    });
+    box.append(table);
+  }
+
+  $('f').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const form = e.target;
+    const btn = $('go');
+    const status = $('status');
+    status.className = '';
+    status.textContent = 'Connexion à Jira…';
+    btn.disabled = true;
+
+    const payload = Object.fromEntries(new FormData(form));
+    form.password.value = ''; // on ne garde pas le mot de passe affiché
+
+    try {
+      const r = await fetch('/api/export', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      const data = await r.json();
+      if (!r.ok) throw new Error(data.error || `Erreur HTTP ${r.status}`);
+      status.textContent = '';
+      render(data);
+    } catch (err) {
+      status.className = 'err';
+      status.textContent = 'Erreur : ' + err.message;
+    } finally {
+      btn.disabled = false;
+    }
+  });
+</script>
+</body>
+</html>

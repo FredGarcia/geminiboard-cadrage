@@ -1,7 +1,8 @@
 # Gemini CLI réel, lancé comme le board, sous Linux et sous Windows natif (D13), sans compte :
 # une clé d'API invalide suffit à vérifier le lancement (code 144, ou 400 sous Windows), la mesure de la
 # mémoire et le masquage du spike ; le spike S5 vérifie l'activation par extension de projet (catalogue) ;
-# check-extension vérifie l'extension du dépôt : skill, sous-agent, commandes /board:* et leur politique.
+# check-extension vérifie l'extension du dépôt : skill, sous-agent, commandes /board:* et leur politique ;
+# check-server vérifie le serveur du board et son client de bout en bout, jusqu'à l'erreur d'API.
 # Chaque lundi, la dernière version de Gemini CLI est éprouvée (une version sort chaque semaine).
 # Chaque étape passe par tools/ci-run.mjs, qui publie la fin de la sortie en annotation si elle échoue.
 name: gemini-cli
@@ -9,7 +10,8 @@ name: gemini-cli
 on:
   push:
     paths:
-      - packages/server/src/run-gemini.mjs
+      - packages/server/src/**
+      - packages/cli/src/**
       - spike/**
       - skills/**
       - commands/**
@@ -50,3 +52,4 @@ jobs:
       - run: node tools/ci-run.mjs "Contrôle du spike" node tools/ci-spike-check.mjs ci-spike
       - run: node tools/ci-run.mjs "Spike S5 (catalogue)" node spike/catalogue.mjs
       - run: node tools/ci-run.mjs "Extension du dépôt" node tools/check-extension.mjs
+      - run: node tools/ci-run.mjs "Serveur du board" node tools/check-server.mjs

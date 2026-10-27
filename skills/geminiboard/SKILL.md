@@ -65,7 +65,7 @@ Ils ne se changent que par une décision ratifiée. Règle, raison, mise en œuv
 | 4 | Prompt sur l'entrée standard de Gemini CLI : ni argument, ni shell, ni `shell: true` | tests du lanceur |
 | 5 | Node.js 20 : toute bibliothèque l'accepte (D10) | `verifier.mjs` |
 | 6 | Windows natif et WSL2 (D13) : scripts en Node.js, chemins reconnus à leur forme, pas de `&&` | CI Ubuntu et Windows |
-| 7 | Aucun identifiant détenu par le board ; secrets des serveurs MCP en `$VAR` | revue, `verifier.mjs` |
+| 7 | Aucun identifiant détenu par le board ; secrets masqués avant écriture ; secrets des serveurs MCP en `$VAR` ; serveur sur `127.0.0.1`, hôte et origine contrôlés | tests du serveur, revue, `verifier.mjs` |
 | 8 | Ni le dépôt d'un projet ni les fichiers internes de Gemini CLI ne sont écrits : commandes publiques seulement | revue |
 | 9 | Dépôt public : aucune donnée de client, de session ou personnelle ; base jamais versionnée | `verifier.mjs` |
 | 10 | Composants portables entre Gemini CLI et Claude Code | `tools/check-components.mjs`, `tools/check-extension.mjs` |

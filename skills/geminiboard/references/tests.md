@@ -16,6 +16,8 @@
 | `packages/server/test/schema.test.mjs` | migrations et empreintes (CRLF compris), lecture seule, contraintes, plein texte sans accents, journal en ajout seul, vues |
 | `packages/server/test/projector.test.mjs` | règles de projection, artefacts et instantanés, composants, reprise après arrêt, suppression, reconstruction à l'identique (O2), chemins POSIX et Windows |
 | `packages/server/test/corpus.test.mjs` | rejeu d'un corpus synthétique produit par le spike, du même en version Windows, puis de chaque `fixtures/spike-*` du dépôt |
+| `packages/server/test/server.test.mjs` | serveur contre le faux Gemini CLI : masquage et capture en unités, API des projets, hôte et origine, tour de bout en bout par WebSocket, refus, annulation, nouvelle session après un premier tour en erreur, instantanés, capture `metadata` et `off`, recherche, journal, suppression, sans Gemini CLI, arrêt et arrêt brutal |
+| `packages/cli/test/cli.test.mjs` | client `geminiboard` contre un vrai serveur : usage, projets, `discuter`, `fil`, `discussions`, `sante`, Ctrl+C, prompt lu sur l'entrée standard d'un processus réel |
 | `spike/test/capture.test.mjs` | spike contre le faux Gemini CLI : scénarios, rapport, masquage, mémoire |
 | `tools/test/check-components.test.mjs` | contrôle des composants : TOML, frontmatter, injections, politiques, renvois ; composants du dépôt conformes |
 | `tools/test/skill-scripts.test.mjs` | scripts de la skill : compatibilité Node.js 20, données sensibles, lignes ajoutées d'un diff, motifs locaux, lecture du README, `etat.mjs` |
@@ -33,6 +35,7 @@
 | `APIERR`, ou `FAKE_GEMINI_APIERR=1` | erreur d'API : `result` en erreur, sortie 400 sous Windows et 144 ailleurs |
 | `FAKE_GEMINI_EXIT=41` | échec d'authentification avant tout événement |
 | `FAKE_GEMINI_LOGIN=1` | connexion sans identifiants en cache : 41 avec `NO_BROWSER`, sinon question sur stdout et sortie 42 |
+| `FAKE_GEMINI_STATE=<dossier>` | sessions tenues comme la 0.65, dans ce dossier : `--session-id` d'une session existante, ou `--resume` d'une session qui n'a jamais abouti, sortent avec 42. Les tests du serveur et du client le posent pour tout le fichier (le serveur transmet son environnement à Gemini CLI) |
 
 Un nouveau comportement du lanceur s'accompagne du comportement correspondant dans le faux Gemini CLI, documenté dans son en-tête.
 
@@ -44,7 +47,8 @@ Un nouveau comportement du lanceur s'accompagne du comportement correspondant da
 
 - `node:test` et `node:assert/strict`, sans bibliothèque de test.
 - Horodatages et identifiants déterministes (`T(n)`, identifiants fixes) : jamais l'horloge dans une comparaison d'état.
-- Dossiers temporaires : `mkdtempSync(join(tmpdir(), '<préfixe>-'))`, supprimés par `rmSync(dir, { recursive: true, force: true, maxRetries: 8, retryDelay: 250 })` (EBUSY sous Windows).
+- Dossiers temporaires : `mkdtempSync(join(tmpdir(), '<préfixe>-'))`, supprimés par `rmSync(dir, { recursive: true, force: true, maxRetries: 8, retryDelay: 250 })` (EBUSY sous Windows). Un dossier qui deviendra la racine d'un projet se prend sous sa forme canonique, `realpathSync.native(…)`, comme le fait le serveur : sous Windows, le dossier temporaire peut être un nom court (`RUNNER~1` en CI), que le serveur range sous sa forme longue.
+- Serveur : `setup()` de `packages/server/test/server.test.mjs` (serveur sur un port libre, base et projet temporaires, `api()` par `inject`) et `wsClient(port)` (`prompt()` rend `turn.start`, puis `end()` et `events()`) ; attendre un état par `until(…)`, jamais par un délai fixe.
 - Données synthétiques seulement : noms fictifs (`jean.dupont`), chemins masqués (`<HOME>`, `/travail/projet`, `C:\fixtures\workspace`), jamais une sortie réelle copiée.
 - Une fausse clé ou un faux jeton se construit par morceaux (`'AI' + 'za' + …`) : sinon `verifier.mjs` signalerait le fichier de test lui-même.
 
@@ -60,7 +64,7 @@ Un nouveau comportement du lanceur s'accompagne du comportement correspondant da
 | Workflow | Déclenchement | Contenu |
 |---|---|---|
 | `.github/workflows/tests.yml` | chaque push | `npm ci`, contrôle que better-sqlite3 s'installe sans compilation, `npm run test:ci` ; Ubuntu et Windows, Node.js 20 et 22 |
-| `.github/workflows/gemini-cli.yml` | chaque lundi, et chaque push qui touche le lanceur, le spike, les composants ou leurs contrôles | dernier Gemini CLI réel, sans compte : spike S4 avec une clé invalide, `tools/ci-spike-check.mjs`, spike S5 (`spike/catalogue.mjs`), extension du dépôt (`tools/check-extension.mjs`) ; Ubuntu et Windows, Node.js 20 |
+| `.github/workflows/gemini-cli.yml` | chaque lundi, et chaque push qui touche le serveur, le client, le spike, les composants ou leurs contrôles | dernier Gemini CLI réel, sans compte : spike S4 avec une clé invalide, `tools/ci-spike-check.mjs`, spike S5 (`spike/catalogue.mjs`), extension du dépôt (`tools/check-extension.mjs`), serveur et client de bout en bout jusqu'à l'erreur d'API (`tools/check-server.mjs`) ; Ubuntu et Windows, Node.js 20 |
 
 - Lire un échec : chaque test en échec devient une annotation (`tools/ci-annotations.mjs`), et chaque étape du workflow `gemini-cli` publie la fin de sa sortie quand elle échoue (`tools/ci-run.mjs`). Les annotations se lisent dans la PR, ou par l'API des check runs (`gh api repos/<dépôt>/commits/<sha>/check-runs`, puis `…/check-runs/<id>/annotations`).
 - Une PR ne se présente qu'avec les deux workflows au vert, sous Ubuntu et sous Windows.

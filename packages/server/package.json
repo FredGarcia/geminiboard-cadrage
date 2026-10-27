@@ -5,10 +5,20 @@
   "engines": {
     "node": ">=20"
   },
+  "exports": {
+    ".": "./src/server.mjs",
+    "./*": "./src/*"
+  },
   "dependencies": {
-    "better-sqlite3": "12.9.0"
+    "@fastify/websocket": "11.3.4",
+    "better-sqlite3": "12.9.0",
+    "fastify": "5.12.7"
+  },
+  "devDependencies": {
+    "ws": "8.22.0"
   },
   "scripts": {
-    "test": "node --test test/run-gemini.test.mjs test/schema.test.mjs test/projector.test.mjs test/corpus.test.mjs"
+    "start": "node src/server.mjs",
+    "test": "node --test test/run-gemini.test.mjs test/schema.test.mjs test/projector.test.mjs test/corpus.test.mjs test/server.test.mjs"
   }
 }

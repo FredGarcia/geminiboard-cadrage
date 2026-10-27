@@ -1,6 +1,6 @@
 {
   "name": "geminiboard",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Construction de GeminiBoard dans ce dépôt : skill geminiboard, commandes /board:* et sous-agent relecteur-board",
   "contextFileName": "AGENTS.md"
 }

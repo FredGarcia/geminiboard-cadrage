@@ -1,6 +1,6 @@
 # Gemini CLI 0.65 : comportements vérifiés
 
-Relevés sur Gemini CLI 0.65.0 (publiée le 20 octobre 2026), dans son code et sur des installations de démonstration, sous Linux et sous Windows, du 24 au 26 octobre 2026. Gemini CLI publie une version par semaine : pour une autre version, revérifier un point avant de bâtir dessus (dernière section). Le README en donne le contexte (§5.5, §6.2, §9.1).
+Relevés sur Gemini CLI 0.65.0 (publiée le 20 octobre 2026), dans son code et sur des installations de démonstration, sous Linux et sous Windows, du 24 au 27 octobre 2026. Gemini CLI publie une version par semaine : pour une autre version, revérifier un point avant de bâtir dessus (dernière section). Le README en donne le contexte (§5.5, §6.2, §9.1).
 
 ## Lancement headless, comme le board
 
@@ -32,7 +32,9 @@ Le message `user` renvoie le prompt tel quel ; pour une commande, la commande br
 
 - 0 succès, 1 erreur générale, 41 authentification, 42 entrée invalide, 52 configuration, 53 limite de tours, 55 dossier non approuvé, 130 annulation.
 - Une erreur d'API sort avec le statut HTTP : 400 sous Windows, où les codes tiennent sur 32 bits, 144 ailleurs (400 modulo 256). Seul l'événement `result` fait foi.
-- `--session-id <uuid>` crée la session, `--resume <uuid>` la reprend. Une session n'est enregistrée qu'après un tour abouti : après un premier tour en erreur, `--resume` sort avec 42 (« No previous sessions found for this project »).
+- `--session-id <uuid>` crée la session, `--resume <uuid>` la reprend.
+- Le fichier d'une session est écrit dès son premier tour, même en erreur, mais la session ne se reprend qu'après une réponse du modèle. Après un premier tour en erreur, elle ne se reprend pas (`--resume` sort avec 42 : « Error resuming session: No previous sessions found for this project. ») et ne se recrée pas (`--session-id` du même identifiant sort avec 42 : « Error starting session: Session ID "…" already exists. Use --resume to resume it, or provide a different ID. »). Le board ouvre alors une nouvelle session pour la même discussion. Constaté le 27 octobre 2026 (`tools/check-server.mjs`).
+- Nom du fichier de session : `session-<AAAA-MM-JJTHH-mm>-<8 premiers caractères de l'identifiant>.jsonl`, dans le dossier des sessions du projet (`~/.gemini/tmp/…/chats/`). Deux UUIDv7 créés dans la même minute ont les mêmes 8 premiers caractères : le second fichier écrase le premier. D'où des identifiants de session aléatoires (`randomUUID()`, version 4), jamais des UUIDv7.
 
 ## Approbation et politiques
 
@@ -100,7 +102,8 @@ Le message `user` renvoie le prompt tel quel ; pour une commande, la commande br
 
 - Isoler l'essai : `GEMINI_CLI_HOME` vers un dossier temporaire, `GEMINI_CLI_NO_RELAUNCH=true`, `NO_BROWSER=true`.
 - Sans compte, une clé invalide (`GEMINI_API_KEY=cle-invalide`) suffit pour vérifier le lancement, les codes de sortie, le chargement des composants, l'expansion des commandes et les politiques : l'appel au modèle échoue ensuite en 400.
-- Scripts du dépôt : `spike/catalogue.mjs` (activation par extension de projet), `tools/check-extension.mjs` (extension du dépôt et commandes `/board:*`), `spike/capture.mjs` avec `--only S4` (lancement, mémoire, masquage).
+- Scripts du dépôt : `spike/catalogue.mjs` (activation par extension de projet), `tools/check-extension.mjs` (extension du dépôt et commandes `/board:*`), `tools/check-server.mjs` (serveur et client de bout en bout, sessions), `spike/capture.mjs` avec `--only S4` (lancement, mémoire, masquage).
+- Le faux Gemini CLI des tests ne vaut que ce qu'on y a reporté : une règle qui n'a tenu que contre lui (la recréation d'une session ratée, par exemple) se vérifie sur le vrai avant d'être bâtie.
 - Avec un vrai compte : seulement avec l'accord de l'humain, car le quota est consommé, et sans aucune donnée réelle dans les prompts.
 
 ## Nouvelle version de Gemini CLI

@@ -9,7 +9,11 @@
   "engines": {
     "node": ">=20"
   },
+  "overrides": {
+    "light-my-request": "6.6.0"
+  },
   "scripts": {
+    "start": "node packages/server/src/server.mjs",
     "test": "node tools/run-tests.mjs",
     "test:ci": "node tools/run-tests.mjs --test-reporter=spec --test-reporter-destination=stdout --test-reporter=./tools/ci-annotations.mjs --test-reporter-destination=stdout",
     "spike": "node spike/capture.mjs"

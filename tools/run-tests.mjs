@@ -9,6 +9,8 @@ const TEST_FILES = [
   'packages/server/test/schema.test.mjs',
   'packages/server/test/projector.test.mjs',
   'packages/server/test/corpus.test.mjs',
+  'packages/server/test/server.test.mjs',
+  'packages/cli/test/cli.test.mjs',
   'spike/test/capture.test.mjs',
   'tools/test/check-components.test.mjs',
   'tools/test/skill-scripts.test.mjs',

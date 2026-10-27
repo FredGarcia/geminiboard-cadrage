@@ -166,6 +166,60 @@ test('tour ouvert : la projection attend sa clôture ; reprise après arrêt du 
   assert.deepEqual(db.prepare('SELECT status FROM turn ORDER BY id').all().map((r) => r.status), ['cancelled', 'completed']);
 });
 
+test('version 3 : action du board projetée pendant un tour ouvert ; rattachement aux projets déclarés avant le tour', () => {
+  const { db, rec, proj } = freshBoard();
+  const P2 = '01a17300-0000-7000-8000-0000000000bb';
+  rec.board({ type: 'project.upsert', payload: { id: P, slug: 'board', name: 'Board', root_path: '/travail/projet' }, at: T(0) });
+  recordTurn(rec, { sessionId: S1, runId: 'r1', prompt: 'long', cwd: '/travail/projet/sous', start: 1, close: false,
+    events: [{ type: 'init', session_id: S1, model: 'm' }] });
+  // Projet plus profond déclaré pendant le tour : projeté aussitôt, sans attendre la fin du tour
+  rec.board({ type: 'project.upsert', payload: { id: P2, slug: 'sous', name: 'Sous-projet', root_path: '/travail/projet/sous' }, at: T(5) });
+  assert.equal(proj.projectPending(), 2);
+  assert.equal(db.prepare('SELECT name FROM project WHERE id = ?').get(P2).name, 'Sous-projet');
+  assert.equal(db.prepare('SELECT count(*) AS n FROM conversation').get().n, 0, 'le tour ouvert attend sa clôture');
+  rec.end({ runId: 'r1', code: 0, endedAt: T(6) });
+  recordTurn(rec, { sessionId: S2, runId: 'r2', prompt: 'ensuite', cwd: '/travail/projet/sous', start: 10,
+    events: [{ type: 'result', status: 'success' }] });
+  proj.projectPending();
+  // Le rattachement ne dépend que du journal : comme si tout avait été projeté dans l'ordre
+  const attach = () => db.prepare('SELECT id, project_id FROM conversation ORDER BY id').all();
+  assert.deepEqual(attach(), [{ id: S1, project_id: P }, { id: S2, project_id: P2 }]);
+  const before = projections(db);
+  proj.rebuild();
+  assert.deepEqual(projections(db), before);
+  assert.ok(db.prepare('SELECT count(*) AS n FROM event WHERE projector_version = 3').get().n > 0);
+});
+
+test('version 3 : une discussion sur plusieurs sessions de Gemini CLI, nommée par le prompt ; suppression par discussion', () => {
+  const { db, rec, proj } = freshBoard();
+  const C = '01a17300-0000-7000-8000-0000000000cc';
+  const A = '6f1d2c3b-0000-4000-8000-00000000000a';
+  const B = '6f1d2c3b-0000-4000-8000-00000000000b';
+  const turn = (runId, sessionId, prompt, start, status) => {
+    rec.start({ runId, sessionId, conversationId: C, cwd: '/travail/projet', prompt, startedAt: T(start) });
+    rec.event({ runId, sessionId, event: { type: 'result', status, timestamp: T(start + 1) }, at: T(start + 1) });
+    rec.end({ runId, code: status === 'success' ? 0 : 144, endedAt: T(start + 2) });
+  };
+  turn('r1', A, 'Premier essai', 0, 'error');   // session A ratée
+  turn('r2', B, 'Second essai', 10, 'success'); // la discussion passe à la session B
+  turn('r3', B, 'Suite', 20, 'success');
+  proj.projectPending();
+  const conv = db.prepare('SELECT id, engine_session_id, title FROM conversation').all();
+  assert.deepEqual(conv, [{ id: C, engine_session_id: B, title: 'Premier essai' }]);
+  assert.deepEqual(turns(db, C).map((t) => [t.seq, t.status]), [[1, 'error'], [2, 'completed'], [3, 'completed']]);
+  assert.equal(db.prepare('SELECT count(*) AS n FROM event WHERE conversation_id = ?').get(C).n, 6, 'événements rattachés à la discussion');
+  const before = projections(db);
+  proj.rebuild();
+  assert.deepEqual(projections(db), before);
+
+  rec.board({ type: 'conversation.delete', payload: { conversation_id: C }, at: T(30) });
+  proj.projectPending();
+  assert.equal(db.prepare('SELECT count(*) AS n FROM conversation').get().n, 0);
+  proj.rebuild();
+  assert.equal(db.prepare('SELECT count(*) AS n FROM conversation').get().n, 0, 'la suppression tient au rejeu');
+  assert.equal(db.prepare('SELECT count(*) AS n FROM event WHERE conversation_id IS NOT NULL').get().n, 0);
+});
+
 test('suppression : la discussion disparaît et ne revient pas au rejeu', () => {
   const { db, rec, proj } = freshBoard();
   recordTurn(rec, { sessionId: S1, runId: 'r1', prompt: 'à oublier', events: [{ type: 'result', status: 'success' }] });
